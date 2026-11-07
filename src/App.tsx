@@ -3,12 +3,20 @@
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Project, ScriptDocument, BlockType } from './types/script';
+import {
+  Project,
+  ScriptDocument,
+  ScriptStructureType,
+  NarrativeMethodologyId,
+} from './types/script';
 import { StorageService } from './lib/storage';
+import { ScreenplayEngine } from './lib/screenplay-engine';
 import {
   initDriveAuth,
   googleDriveSignIn,
   googleDriveLogout,
+  getTargetDrivePath,
+  getTargetLocalDirectoryPath,
 } from './lib/googleDrive';
 import { Navbar } from './components/Navbar';
 import { ProjectLibrary } from './components/ProjectLibrary';
@@ -199,43 +207,47 @@ export default function App() {
     handleUpdateProject(updatedProject);
   };
 
-  // Create clean blank project
+  // Create clean blank project adapted to the chosen structure (A-K)
   const handleCreateProject = async (data: any) => {
     const newId = `proj-${Date.now()}`;
     const initialDocId = `doc-${Date.now()}`;
+    const chosenStructure: ScriptStructureType =
+      data.templateType || data.defaultStructure || 'cinematografica';
+    const chosenMethodology: NarrativeMethodologyId = data.methodologyId || 'none';
+    const projTitle = data.title || 'Guion sin título';
+    const category = data.category || 'movie';
+    const seasonTitle = category === 'series' ? 'Temporada 1' : undefined;
 
-    const initialBlocks = [
-      {
-        id: `blk-${Date.now()}-1`,
-        type: 'scene_heading' as BlockType,
-        text: 'INT. LUGAR - DÍA',
-      },
-      {
-        id: `blk-${Date.now()}-2`,
-        type: 'action' as BlockType,
-        text: '',
-      },
-    ];
+    const initialBlocks = ScreenplayEngine.getInitialBlocksForStructure(chosenStructure);
+    const localDir = getTargetLocalDirectoryPath(category, projTitle, seasonTitle);
+    const driveDir = getTargetDrivePath(category, projTitle, seasonTitle);
 
     const initialDoc: ScriptDocument = {
       id: initialDocId,
       projectId: newId,
-      title: data.category === 'series' ? 'Capítulo 1' : data.title || 'Guion sin título',
-      templateType: data.templateType || 'screenplay',
+      title: category === 'series' ? 'Capítulo 1' : projTitle,
+      templateType: chosenStructure,
+      methodologyId: chosenMethodology,
       blocks: initialBlocks,
+      localDirectoryPath: localDir,
+      driveFolderPath: driveDir,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
     const newProject: Project = {
       id: newId,
-      title: data.title || 'Guion sin título',
-      category: data.category || 'movie',
+      title: projTitle,
+      category,
       subCategory: data.subCategory,
+      defaultStructure: chosenStructure,
+      methodologyId: chosenMethodology,
       author: data.author || 'Autor',
       isFavorite: false,
       isArchived: false,
       isDeleted: false,
+      localDirectoryPath: localDir,
+      driveFolderPath: driveDir,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       characters: [],
@@ -249,16 +261,16 @@ export default function App() {
           updatedAt: new Date().toISOString(),
         },
       ],
-      documents: data.category === 'series' ? [] : [initialDoc],
+      documents: category === 'series' ? [] : [initialDoc],
       seasons:
-        data.category === 'series'
+        category === 'series'
           ? [
               {
                 id: `seas-${Date.now()}`,
                 projectId: newId,
                 seasonNumber: 1,
                 title: 'Temporada 1',
-                episodes: [initialDoc],
+                episodes: [{ ...initialDoc, seasonId: `seas-${Date.now()}` }],
               },
             ]
           : undefined,

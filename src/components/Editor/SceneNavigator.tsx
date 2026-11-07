@@ -84,7 +84,9 @@ export const SceneNavigator: React.FC<SceneNavigatorProps> = ({
                     className="flex-1 text-left focus:outline-none"
                   >
                     <div className="flex items-center gap-1.5 text-[10px] text-blue-600 dark:text-blue-400 font-mono font-semibold">
-                      <span>ESCENA {scene.sceneNumber}</span>
+                      <span>
+                        {scene.badge || 'ESCENA'} {scene.sceneNumber}
+                      </span>
                     </div>
 
                     <h4 className="mt-0.5 font-mono text-xs font-bold text-slate-800 dark:text-neutral-200 group-hover:text-blue-600 dark:group-hover:text-white leading-tight line-clamp-2">

@@ -1,6 +1,11 @@
 /**
- * Google Drive Integration via Firebase Auth (Client-Side OAuth Token)
- * Organizes scripts in: Gerstep/Guiones/[Peliculas | Series | Videos | Contenido Episodico | Personalizados]
+ * Google Drive & Local Directory Structure Manager
+ *
+ * Google Drive Hierarchy:
+ *   Gerstep/Guiones/[Peliculas | Series | Videos | Contenido Episodico | Personalizados]/[Nombre del Guion]/[Temporada X/][Archivo]
+ *
+ * Local Directory Hierarchy:
+ *   Documento/Gerstep/[Peliculas | Series | Videos | Contenido Episodico | Personalizados]/[Nombre del Guion]/[Temporada X/][Archivo]
  */
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
@@ -22,7 +27,6 @@ const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 SCOPES.forEach((scope) => provider.addScope(scope));
 
-// In-memory token cache (never stored in localStorage/sessionStorage per security rules)
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 
@@ -80,6 +84,13 @@ export const googleDriveLogout = async () => {
   cachedAccessToken = null;
 };
 
+export function sanitizeFolderName(raw: string): string {
+  return (raw || 'Sin Titulo')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ');
+}
+
 export function getCategoryFolderName(category: ProjectCategory): string {
   switch (category) {
     case 'movie':
@@ -95,17 +106,58 @@ export function getCategoryFolderName(category: ProjectCategory): string {
   }
 }
 
-export function getTargetDrivePath(category: ProjectCategory): string {
+/**
+ * Returns the Google Drive directory path for a project/document:
+ * Gerstep/Guiones/[Categoría]/[Nombre del Guion]/[Temporada X]
+ */
+export function getTargetDrivePath(
+  category: ProjectCategory,
+  projectTitle?: string,
+  seasonTitle?: string
+): string {
   const baseRoot =
     (import.meta as any).env?.VITE_GOOGLE_DRIVE_ROOT_FOLDER || 'Gerstep/Guiones';
   const cleanRoot = baseRoot.replace(/^\/+|\/+$/g, '');
   const categoryFolder = getCategoryFolderName(category);
-  return `${cleanRoot}/${categoryFolder}`;
+
+  if (!projectTitle) {
+    return `${cleanRoot}/${categoryFolder}`;
+  }
+
+  const cleanProj = sanitizeFolderName(projectTitle);
+  if (category === 'series' && seasonTitle) {
+    return `${cleanRoot}/${categoryFolder}/${cleanProj}/${sanitizeFolderName(
+      seasonTitle
+    )}`;
+  }
+
+  return `${cleanRoot}/${categoryFolder}/${cleanProj}`;
 }
 
 /**
- * Finds or creates a single folder inside a parent folder in Google Drive
+ * Returns the Local Directory path for a project/document:
+ * Documento/Gerstep/[Categoría]/[Nombre del Guion]/[Temporada X/][Archivo]
  */
+export function getTargetLocalDirectoryPath(
+  category: ProjectCategory,
+  projectTitle?: string,
+  seasonTitle?: string,
+  documentTitle?: string
+): string {
+  const categoryFolder = getCategoryFolderName(category);
+  const cleanProj = sanitizeFolderName(projectTitle || 'Mi Guion');
+
+  const segments = ['Documento', 'Gerstep', categoryFolder, cleanProj];
+  if (category === 'series' && seasonTitle) {
+    segments.push(sanitizeFolderName(seasonTitle));
+  }
+  if (documentTitle) {
+    segments.push(`${sanitizeFolderName(documentTitle)}.fountain`);
+  }
+
+  return segments.join('/');
+}
+
 async function findOrCreateFolder(
   folderName: string,
   parentId: string | null,
@@ -132,7 +184,6 @@ async function findOrCreateFolder(
     return searchData.files[0].id;
   }
 
-  // Create folder if it doesn't exist
   const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
     method: 'POST',
     headers: {
@@ -155,13 +206,16 @@ async function findOrCreateFolder(
 }
 
 /**
- * Ensures the full hierarchy "Gerstep/Guiones/[Categoría]" exists and returns the leaf folder ID
+ * Ensures the full project directory hierarchy exists in Google Drive:
+ * Gerstep/Guiones/[Categoría]/[Nombre del Guion]/[Temporada X (if series)]
  */
 export async function ensureCategoryFolderHierarchy(
   category: ProjectCategory,
-  token: string
+  token: string,
+  projectTitle?: string,
+  seasonTitle?: string
 ): Promise<{ folderId: string; fullPath: string }> {
-  const fullPath = getTargetDrivePath(category);
+  const fullPath = getTargetDrivePath(category, projectTitle, seasonTitle);
   const parts = fullPath.split('/').filter(Boolean);
 
   let currentParentId: string | null = null;
@@ -176,9 +230,6 @@ export async function ensureCategoryFolderHierarchy(
   return { folderId: currentParentId, fullPath };
 }
 
-/**
- * Checks if a script file already exists in the target folder or by fileId
- */
 export async function checkExistingScriptFileInDrive(
   fileName: string,
   folderId: string,
@@ -221,7 +272,7 @@ export async function checkExistingScriptFileInDrive(
 }
 
 /**
- * Uploads or updates a script document inside Gerstep/Guiones/[Categoría]
+ * Uploads or updates a script document inside its own dedicated project directory in Google Drive
  */
 export async function uploadScriptToGoogleDrive(params: {
   project: Project;
@@ -229,19 +280,23 @@ export async function uploadScriptToGoogleDrive(params: {
   folderId: string;
   existingFileId?: string;
   token: string;
+  seasonTitle?: string;
 }): Promise<{
   fileId: string;
   webViewLink: string;
   folderPath: string;
 }> {
-  const { project, document: scriptDoc, folderId, existingFileId, token } = params;
-  const folderPath = getTargetDrivePath(project.category);
+  const { project, document: scriptDoc, folderId, existingFileId, token, seasonTitle } =
+    params;
+  const folderPath = getTargetDrivePath(
+    project.category,
+    project.title,
+    seasonTitle
+  );
 
-  const safeProjectName = project.title.trim();
-  const safeDocName =
-    project.category === 'series'
-      ? `${safeProjectName} - ${scriptDoc.title}.fountain`
-      : `${safeProjectName}.fountain`;
+  const safeDocName = `${sanitizeFolderName(
+    scriptDoc.title || project.title
+  )}.fountain`;
 
   const fountainContent = Exporters.exportToFountain(
     scriptDoc.blocks,
@@ -252,7 +307,7 @@ export async function uploadScriptToGoogleDrive(params: {
   const metadata: Record<string, any> = {
     name: safeDocName,
     mimeType: 'text/plain',
-    description: `Guion creado con CineDocs Studio (${folderPath})`,
+    description: `Guion de ${project.title} (${folderPath})`,
   };
 
   if (!existingFileId) {
@@ -299,4 +354,93 @@ export async function uploadScriptToGoogleDrive(params: {
       data.webViewLink || `https://drive.google.com/file/d/${data.id}/view`,
     folderPath,
   };
+}
+
+/**
+ * Saves the script directly into the user's local directory structure:
+ * Documento/Gerstep/[Categoría]/[Nombre del Guion]/[Temporada X/][Archivo]
+ */
+export async function saveToLocalGerstepDirectory(params: {
+  project: Project;
+  document: ScriptDocument;
+  seasonTitle?: string;
+}): Promise<{ savedPath: string; usedNativeFS: boolean }> {
+  const { project, document: scriptDoc, seasonTitle } = params;
+  const categoryFolder = getCategoryFolderName(project.category);
+  const projectFolder = sanitizeFolderName(project.title);
+  const fileName = `${sanitizeFolderName(scriptDoc.title || project.title)}.fountain`;
+  const jsonBackupName = `${sanitizeFolderName(
+    scriptDoc.title || project.title
+  )}.gerstep.json`;
+
+  const targetRelativePath = getTargetLocalDirectoryPath(
+    project.category,
+    project.title,
+    seasonTitle,
+    scriptDoc.title || project.title
+  );
+
+  const fountainContent = Exporters.exportToFountain(
+    scriptDoc.blocks,
+    `${project.title} — ${scriptDoc.title}`,
+    project.author
+  );
+
+  const win = window as any;
+  if (typeof win.showDirectoryPicker === 'function') {
+    try {
+      const rootHandle = await win.showDirectoryPicker({
+        mode: 'readwrite',
+        startIn: 'documents',
+      });
+
+      const gerstepDir = await rootHandle.getDirectoryHandle('Gerstep', {
+        create: true,
+      });
+      const catDir = await gerstepDir.getDirectoryHandle(categoryFolder, {
+        create: true,
+      });
+      const projDir = await catDir.getDirectoryHandle(projectFolder, {
+        create: true,
+      });
+
+      let targetDir = projDir;
+      if (project.category === 'series' && seasonTitle) {
+        targetDir = await projDir.getDirectoryHandle(
+          sanitizeFolderName(seasonTitle),
+          { create: true }
+        );
+      }
+
+      // Write .fountain script
+      const fileHandle = await targetDir.getFileHandle(fileName, {
+        create: true,
+      });
+      const writable = await fileHandle.createWritable();
+      await writable.write(fountainContent);
+      await writable.close();
+
+      // Also write structured JSON project metadata inside its directory
+      const jsonHandle = await targetDir.getFileHandle(jsonBackupName, {
+        create: true,
+      });
+      const jsonWritable = await jsonHandle.createWritable();
+      await jsonWritable.write(JSON.stringify({ project, document: scriptDoc }, null, 2));
+      await jsonWritable.close();
+
+      return { savedPath: targetRelativePath, usedNativeFS: true };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        throw new Error('Selección de carpeta cancelada por el usuario.');
+      }
+      // Fallback to browser download if running inside restricted cross-origin iframe
+    }
+  }
+
+  Exporters.downloadBlob(
+    fountainContent,
+    `${projectFolder}__${fileName}`,
+    'text/plain;charset=utf-8'
+  );
+  return { savedPath: targetRelativePath, usedNativeFS: false };
 }

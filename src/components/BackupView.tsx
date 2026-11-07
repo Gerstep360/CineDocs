@@ -8,7 +8,7 @@ import {
   Database,
   CloudUpload,
   FolderTree,
-  ExternalLink,
+  FolderOpen,
 } from 'lucide-react';
 import { Project } from '../types/script';
 import { StorageService } from '../lib/storage';
@@ -19,6 +19,7 @@ import {
   ensureCategoryFolderHierarchy,
   uploadScriptToGoogleDrive,
   getTargetDrivePath,
+  getTargetLocalDirectoryPath,
 } from '../lib/googleDrive';
 
 interface BackupViewProps {
@@ -87,9 +88,14 @@ export const BackupView: React.FC<BackupViewProps> = ({
 
       let syncedCount = 0;
       for (const proj of activeProjects) {
+        const seasonTitle =
+          proj.category === 'series' ? proj.seasons?.[0]?.title : undefined;
+
         const { folderId, fullPath } = await ensureCategoryFolderHierarchy(
           proj.category,
-          token
+          token,
+          proj.title,
+          seasonTitle
         );
 
         const primaryDoc =
@@ -102,6 +108,7 @@ export const BackupView: React.FC<BackupViewProps> = ({
           folderId,
           existingFileId: primaryDoc.driveFileId,
           token,
+          seasonTitle,
         });
 
         primaryDoc.driveFileId = uploadRes.fileId;
@@ -118,7 +125,7 @@ export const BackupView: React.FC<BackupViewProps> = ({
 
       await onRefreshProjects();
       setStatusMessage(
-        `Se sincronizaron ${syncedCount} guiones en sus carpetas correspondientes dentro de "Gerstep/Guiones/..." en tu Google Drive.`
+        `Se sincronizaron ${syncedCount} guiones en sus directorios individuales dentro de "Gerstep/Guiones/[Categoría]/[Nombre del Guion]" en Google Drive.`
       );
     } catch (e: any) {
       setStatusMessage(e.message || 'Error al sincronizar con Google Drive.');
@@ -137,10 +144,10 @@ export const BackupView: React.FC<BackupViewProps> = ({
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-              Guardado Local Seguro y Sincronización con Google Drive
+              Directorios por Proyecto: Guardado Local y Google Drive
             </h1>
             <p className="text-xs text-slate-500 dark:text-neutral-400 mt-0.5">
-              Tus guiones se guardan de forma inmediata en este dispositivo y pueden sincronizarse automáticamente en tu Google Drive.
+              Cada proyecto cuenta con su propio directorio dedicado tanto en tu equipo local como en Google Drive.
             </p>
           </div>
         </div>
@@ -166,10 +173,10 @@ export const BackupView: React.FC<BackupViewProps> = ({
             </div>
             <div>
               <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-                Organización Automática en Google Drive
+                Jerarquía de Directorios por Proyecto (Drive y Local)
               </h2>
               <p className="text-xs text-slate-500 dark:text-neutral-400 mt-0.5">
-                Al guardar en Drive, la aplicación crea y organiza tus archivos automáticamente según el tipo de proyecto:
+                Cada guion se organiza automáticamente en su propia carpeta dedicada según su categoría y título:
               </p>
             </div>
           </div>
@@ -226,22 +233,41 @@ export const BackupView: React.FC<BackupViewProps> = ({
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono">
           {[
-            { cat: 'movie' as const, label: 'Películas y Cortos' },
-            { cat: 'series' as const, label: 'Series por Capítulos' },
-            { cat: 'video' as const, label: 'Videos / YouTube' },
-            { cat: 'episodic' as const, label: 'Contenido Episódico' },
+            { cat: 'movie' as const, label: 'Películas y Cortometrajes', sample: 'Mi Película' },
+            { cat: 'series' as const, label: 'Series por Temporadas y Capítulos', sample: 'Mi Serie' },
+            { cat: 'video' as const, label: 'Videos Independientes / YouTube', sample: 'Mi Video' },
+            { cat: 'episodic' as const, label: 'Contenido Episódico y Programas', sample: 'Mi Programa' },
           ].map((item) => (
             <div
               key={item.cat}
-              className="p-3 rounded-xl bg-slate-50 dark:bg-neutral-800/50 border border-slate-200 dark:border-neutral-800"
+              className="p-3.5 rounded-xl bg-slate-50 dark:bg-neutral-800/50 border border-slate-200 dark:border-neutral-800 space-y-1.5"
             >
-              <div className="font-sans font-semibold text-slate-800 dark:text-neutral-200 mb-1">
+              <div className="font-sans font-semibold text-slate-800 dark:text-neutral-200">
                 {item.label}
               </div>
-              <div className="text-[11px] text-blue-600 dark:text-blue-400 break-all">
-                {getTargetDrivePath(item.cat)}
+              <div className="text-[11px] text-blue-600 dark:text-blue-400 break-all flex items-center gap-1.5">
+                <CloudUpload className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  {getTargetDrivePath(
+                    item.cat,
+                    item.sample,
+                    item.cat === 'series' ? 'Temporada 1' : undefined
+                  )}
+                  /[Archivo]
+                </span>
+              </div>
+              <div className="text-[11px] text-emerald-700 dark:text-emerald-400 break-all flex items-center gap-1.5">
+                <FolderOpen className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  {getTargetLocalDirectoryPath(
+                    item.cat,
+                    item.sample,
+                    item.cat === 'series' ? 'Temporada 1' : undefined
+                  )}
+                  /[Archivo]
+                </span>
               </div>
             </div>
           ))}
@@ -253,10 +279,14 @@ export const BackupView: React.FC<BackupViewProps> = ({
         <div className="p-5 rounded-2xl border border-slate-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 space-y-3 shadow-2xs">
           <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-semibold text-xs">
             <ShieldCheck className="w-4 h-4" />
-            <span>Doble Guardado Local (IndexedDB + LocalStorage)</span>
+            <span>Doble Guardado Local + Carpeta Dedicada</span>
           </div>
           <p className="text-xs text-slate-600 dark:text-neutral-400 leading-relaxed">
-            Cada cambio en tus hojas se guarda de manera instantánea en dos bases de datos locales independientes dentro de tu navegador. Aunque pierdas la conexión a internet o cierres la pestaña, tu guion permanece intacto.
+            Cada cambio se guarda al instante en IndexedDB + LocalStorage y puedes guardarlo directamente en tu carpeta local{' '}
+            <code className="font-mono text-[11px]">
+              Documento/Gerstep/[Categoría]/[Nombre del Guion]/
+            </code>{' '}
+            desde el menú Archivo del editor.
           </p>
           <div className="text-xs font-mono text-slate-500 pt-2 border-t border-slate-100 dark:border-neutral-800">
             Guiones activos en este equipo: <strong>{activeProjects.length}</strong>
@@ -313,9 +343,9 @@ export const BackupView: React.FC<BackupViewProps> = ({
                 Confirmar sincronización con Google Drive
               </h3>
               <p className="text-xs text-slate-600 dark:text-neutral-300 leading-relaxed">
-                Se guardarán y actualizarán <strong>{activeProjects.length} guiones</strong> dentro de tu carpeta{' '}
+                Se guardarán y actualizarán <strong>{activeProjects.length} guiones</strong> dentro de sus carpetas respectivas en{' '}
                 <code className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-neutral-800 font-mono">
-                  Gerstep/Guiones/[Categoría]
+                  Gerstep/Guiones/[Categoría]/[Nombre del Guion]
                 </code>{' '}
                 en Google Drive. ¿Deseas continuar?
               </p>

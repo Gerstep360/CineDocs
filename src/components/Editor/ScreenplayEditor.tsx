@@ -10,12 +10,7 @@ import {
   ChevronDown,
   Plus,
   FileText,
-  Film,
   Users,
-  MessageSquare,
-  MapPin,
-  Smile,
-  ArrowRightLeft,
   CloudUpload,
   ExternalLink,
   Check,
@@ -23,18 +18,29 @@ import {
   Minimize2,
   Columns,
   ShieldCheck,
-  History,
   X,
+  Layers,
+  Compass,
+  FolderOpen,
+  SplitSquareVertical,
+  ArrowRightLeft,
 } from 'lucide-react';
 import {
   BlockType,
   ScriptBlock,
   ScriptDocument,
+  ScriptStructureType,
+  NarrativeMethodologyId,
   Project,
   Character,
   LocalSnapshot,
 } from '../../types/script';
-import { ScreenplayEngine } from '../../lib/screenplay-engine';
+import {
+  ScreenplayEngine,
+  STRUCTURES_CATALOG,
+  NARRATIVE_METHODOLOGIES,
+  normalizeStructureType,
+} from '../../lib/screenplay-engine';
 import {
   getDriveAccessToken,
   googleDriveSignIn,
@@ -42,7 +48,10 @@ import {
   checkExistingScriptFileInDrive,
   uploadScriptToGoogleDrive,
   getTargetDrivePath,
+  getTargetLocalDirectoryPath,
+  saveToLocalGerstepDirectory,
 } from '../../lib/googleDrive';
+import { Exporters } from '../../lib/exporters';
 import { SceneNavigator } from './SceneNavigator';
 import { CharactersPanel } from './CharactersPanel';
 import { GuidedAssistant } from './GuidedAssistant';
@@ -57,57 +66,6 @@ interface ScreenplayEditorProps {
   onNavigateToView: (view: 'library' | 'characters' | 'supplementary' | 'backup') => void;
   onGoogleUserConnected?: (user: any) => void;
 }
-
-const FRIENDLY_BLOCK_STYLES: {
-  type: BlockType;
-  label: string;
-  hint: string;
-  shortcut: string;
-  icon: React.FC<{ className?: string }>;
-}[] = [
-  {
-    type: 'scene_heading',
-    label: 'Lugar y Momento (Escena)',
-    hint: 'Ej: INT. CAFETERÍA - DÍA',
-    shortcut: 'Encabezado',
-    icon: MapPin,
-  },
-  {
-    type: 'action',
-    label: 'Descripción de lo que pasa',
-    hint: 'Lo que vemos en pantalla y hacen los personajes',
-    shortcut: 'Acción',
-    icon: FileText,
-  },
-  {
-    type: 'character',
-    label: 'Nombre de quien habla',
-    hint: 'Centrado y en mayúsculas automáticamente',
-    shortcut: 'Personaje',
-    icon: Users,
-  },
-  {
-    type: 'dialogue',
-    label: 'Lo que dice (Diálogo)',
-    hint: 'Las palabras que pronuncia el personaje',
-    shortcut: 'Diálogo',
-    icon: MessageSquare,
-  },
-  {
-    type: 'parenthetical',
-    label: 'Gesto o tono al hablar',
-    hint: 'Ej: (en voz baja), (sonriendo)',
-    shortcut: 'Acotación',
-    icon: Smile,
-  },
-  {
-    type: 'transition',
-    label: 'Cambio o corte de escena',
-    hint: 'Ej: CORTE A:, FUNDIDO A NEGRO:',
-    shortcut: 'Transición',
-    icon: ArrowRightLeft,
-  },
-];
 
 export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
   project,
@@ -127,15 +85,32 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'scenes' | 'characters' | 'episodes'>('scenes');
   const [showAssistantDrawer, setShowAssistantDrawer] = useState(false);
+  const [showMethodologyGuide, setShowMethodologyGuide] = useState(false);
   const [isDistractionFree, setIsDistractionFree] = useState(false);
   const [paperAppearance, setPaperAppearance] = useState<'white' | 'adaptive'>('white');
   const [activeBlockIndex, setActiveBlockIndex] = useState<number>(0);
 
   // Dropdown menus state
   const [openMenu, setOpenMenu] = useState<
-    'file' | 'insert' | 'format' | 'tools' | 'style' | 'zoom' | 'snapshots' | null
+    | 'file'
+    | 'insert'
+    | 'format'
+    | 'tools'
+    | 'style'
+    | 'structure'
+    | 'zoom'
+    | 'snapshots'
+    | null
   >(null);
   const [showPlusMenuAt, setShowPlusMenuAt] = useState<number | null>(null);
+
+  // Structure Conversion Preview Modal (when changing structure of a document with content)
+  const [pendingStructureChange, setPendingStructureChange] = useState<{
+    targetStructure: ScriptStructureType;
+    convertedBlocks: ScriptBlock[];
+    summary: string;
+    isAmbiguous: boolean;
+  } | null>(null);
 
   // Modals
   const [isExportOpen, setIsExportOpen] = useState(false);
@@ -180,6 +155,48 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const activeSeasonTitle = useMemo(() => {
+    if (project.category === 'series' && project.seasons && activeDocument.seasonId) {
+      return project.seasons.find((s) => s.id === activeDocument.seasonId)?.title;
+    }
+    return undefined;
+  }, [project, activeDocument.seasonId]);
+
+  const documentStructure = normalizeStructureType(
+    activeDocument.templateType || project.defaultStructure || 'cinematografica'
+  );
+  const documentStructureDef = ScreenplayEngine.getStructureDefinition(documentStructure);
+
+  // Effective structure at current block (supports Hybrid sub-sections)
+  const effectiveStructureAtCursor = useMemo(() => {
+    return ScreenplayEngine.getEffectiveStructureAtBlock(
+      blocks,
+      activeBlockIndex,
+      documentStructure
+    );
+  }, [blocks, activeBlockIndex, documentStructure]);
+
+  const effectiveStructureDef = useMemo(() => {
+    return ScreenplayEngine.getStructureDefinition(effectiveStructureAtCursor);
+  }, [effectiveStructureAtCursor]);
+
+  const allowedBlockDefsAtCursor = useMemo(() => {
+    return ScreenplayEngine.getAllowedBlocksForPosition(
+      blocks,
+      activeBlockIndex,
+      documentStructure
+    );
+  }, [blocks, activeBlockIndex, documentStructure]);
+
+  const activeMethodologyId: NarrativeMethodologyId =
+    activeDocument.methodologyId || project.methodologyId || 'none';
+  const activeMethodology = useMemo(
+    () =>
+      NARRATIVE_METHODOLOGIES.find((m) => m.id === activeMethodologyId) ||
+      NARRATIVE_METHODOLOGIES[0],
+    [activeMethodologyId]
+  );
+
   const pushHistory = (newBlocks: ScriptBlock[]) => {
     const updatedHistory = history.slice(0, historyIndex + 1);
     updatedHistory.push(newBlocks);
@@ -187,7 +204,11 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     setHistoryIndex(updatedHistory.length - 1);
   };
 
-  const updateBlocksState = (newBlocks: ScriptBlock[], recordHistory = true) => {
+  const updateBlocksState = (
+    newBlocks: ScriptBlock[],
+    recordHistory = true,
+    overrideStructure?: ScriptStructureType
+  ) => {
     setBlocks(newBlocks);
     if (recordHistory) {
       pushHistory(newBlocks);
@@ -195,9 +216,113 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     onUpdateDocument({
       ...activeDocument,
       title: docTitle,
+      templateType: overrideStructure || activeDocument.templateType,
       blocks: newBlocks,
       updatedAt: new Date().toISOString(),
     });
+  };
+
+  // Request changing the document's structure (preserving 100% of text, with preview if needed)
+  const handleRequestStructureChange = (targetStructure: ScriptStructureType) => {
+    setOpenMenu(null);
+    const normalizedTarget = normalizeStructureType(targetStructure);
+    if (normalizedTarget === documentStructure) return;
+
+    const hasWrittenContent = blocks.some(
+      (b) =>
+        (b.text && b.text.trim().length > 0 && !b.text.startsWith('Sección ')) ||
+        (b.visualText && b.visualText.trim().length > 0) ||
+        (b.audioText && b.audioText.trim().length > 0)
+    );
+
+    if (!hasWrittenContent) {
+      const freshBlocks = ScreenplayEngine.getInitialBlocksForStructure(normalizedTarget);
+      updateBlocksState(freshBlocks, true, normalizedTarget);
+      const structDef = ScreenplayEngine.getStructureDefinition(normalizedTarget);
+      setDriveToast({
+        message: `Estructura cambiada a: ${structDef.code}. ${structDef.name}`,
+      });
+      setTimeout(() => setDriveToast(null), 3500);
+      return;
+    }
+
+    const conversion = ScreenplayEngine.convertBlocksToStructure(blocks, normalizedTarget);
+    if (conversion.isAmbiguous) {
+      setPendingStructureChange({
+        targetStructure: normalizedTarget,
+        convertedBlocks: conversion.convertedBlocks,
+        summary: conversion.summary,
+        isAmbiguous: true,
+      });
+    } else {
+      updateBlocksState(conversion.convertedBlocks, true, normalizedTarget);
+      const structDef = ScreenplayEngine.getStructureDefinition(normalizedTarget);
+      setDriveToast({
+        message: `Estructura adaptada a "${structDef.shortName}" sin perder contenido (Ctrl+Z para deshacer).`,
+      });
+      setTimeout(() => setDriveToast(null), 4000);
+    }
+  };
+
+  const confirmStructureConversion = () => {
+    if (!pendingStructureChange) return;
+    const { targetStructure, convertedBlocks } = pendingStructureChange;
+    updateBlocksState(convertedBlocks, true, targetStructure);
+    setPendingStructureChange(null);
+    const structDef = ScreenplayEngine.getStructureDefinition(targetStructure);
+    setDriveToast({
+      message: `Estructura convertida a "${structDef.shortName}" (Puedes deshacer con Ctrl+Z).`,
+    });
+    setTimeout(() => setDriveToast(null), 4000);
+  };
+
+  // Insert a new hybrid section divider with its own chosen structure
+  const handleInsertHybridSection = (sectionStructure: ScriptStructureType) => {
+    setOpenMenu(null);
+    const structDef = ScreenplayEngine.getStructureDefinition(sectionStructure);
+    const sectionCount = blocks.filter((b) => b.type === 'section_divider').length + 1;
+
+    const dividerBlock: ScriptBlock = {
+      id: `blk-sec-${Date.now()}`,
+      type: 'section_divider',
+      text: `Sección ${sectionCount}: ${structDef.shortName}`,
+      sectionStructure,
+    };
+
+    const firstChildType =
+      structDef.defaultFirstBlock === 'section_divider'
+        ? 'narration'
+        : structDef.defaultFirstBlock;
+
+    const firstChildBlock: ScriptBlock = {
+      id: `blk-${Date.now() + 1}`,
+      type: firstChildType,
+      text: '',
+      visualText: firstChildType === 'av_row' ? '' : undefined,
+      audioText: firstChildType === 'av_row' ? '' : undefined,
+    };
+
+    const nextBlocks = [...blocks];
+    nextBlocks.splice(activeBlockIndex + 1, 0, dividerBlock, firstChildBlock);
+
+    // Ensure document structure is set to 'hibrida' when adding hybrid sections
+    updateBlocksState(nextBlocks, true, 'hibrida');
+    setActiveBlockIndex(activeBlockIndex + 2);
+  };
+
+  // Change the structure of an existing Hybrid section divider
+  const handleChangeSectionStructure = (
+    dividerIndex: number,
+    newSectionStruct: ScriptStructureType
+  ) => {
+    const nextBlocks = [...blocks];
+    const current = nextBlocks[dividerIndex];
+    if (!current) return;
+    nextBlocks[dividerIndex] = {
+      ...current,
+      sectionStructure: newSectionStruct,
+    };
+    updateBlocksState(nextBlocks, true);
   };
 
   // Save a named local snapshot for extra safety
@@ -217,6 +342,32 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     setDriveToast({ message: 'Versión guardada de forma segura en este dispositivo.' });
     setTimeout(() => setDriveToast(null), 3500);
     setOpenMenu(null);
+  };
+
+  // Save directly into Local Directory: Documento/Gerstep/[Categoría]/[Nombre del Guion]/[Archivo]
+  const handleSaveToLocalDirectory = async () => {
+    setOpenMenu(null);
+    try {
+      const res = await saveToLocalGerstepDirectory({
+        project,
+        document: { ...activeDocument, title: docTitle, blocks },
+        seasonTitle: activeSeasonTitle,
+      });
+
+      onUpdateProject({
+        ...project,
+        localDirectoryPath: res.savedPath,
+      });
+      setDriveToast({
+        message: `Guardado en directorio local: ${res.savedPath}`,
+      });
+      setTimeout(() => setDriveToast(null), 5000);
+    } catch (e: any) {
+      if (e?.message) {
+        setDriveToast({ message: e.message, isError: true });
+        setTimeout(() => setDriveToast(null), 4000);
+      }
+    }
   };
 
   const handleUndo = () => {
@@ -277,7 +428,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     return ScreenplayEngine.paginate(blocks);
   }, [blocks]);
 
-  // Handle Google Drive Sync to "Gerstep/Guiones/[Categoría]"
+  // Handle Google Drive Sync to "Gerstep/Guiones/[Categoría]/[Nombre del Guion]"
   const handleSyncToGoogleDrive = async () => {
     setOpenMenu(null);
     setIsSyncingDrive(true);
@@ -297,10 +448,12 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
         }
       }
 
-      // 1. Ensure folder hierarchy Gerstep/Guiones/[Peliculas|Series|Videos...] exists
+      // 1. Ensure folder hierarchy Gerstep/Guiones/[Categoría]/[Nombre del Guion]/[Temporada X] exists
       const { folderId, fullPath } = await ensureCategoryFolderHierarchy(
         project.category,
-        token
+        token,
+        project.title,
+        activeSeasonTitle
       );
 
       const safeDocName =
@@ -357,6 +510,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
         folderId,
         existingFileId,
         token,
+        seasonTitle: activeSeasonTitle,
       });
 
       const nowIso = new Date().toISOString();
@@ -409,7 +563,11 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     if (!current) return;
 
     // Autocomplete suggestions
-    if (current.type === 'character') {
+    if (
+      current.type === 'character' ||
+      current.type === 'interview_subject' ||
+      current.type === 'voice_cue'
+    ) {
       const query = newText.trim().toUpperCase();
       if (query.length > 0) {
         const matches = project.characters
@@ -455,14 +613,29 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     if (!current) return;
 
     let updatedText = current.text;
-    if (newType === 'character' || newType === 'scene_heading' || newType === 'transition') {
+    if (
+      newType === 'character' ||
+      newType === 'scene_heading' ||
+      newType === 'transition' ||
+      newType === 'segment_header' ||
+      newType === 'music_section'
+    ) {
       updatedText = updatedText.toUpperCase();
-    } else if (newType === 'parenthetical') {
-      if (updatedText && !updatedText.startsWith('(')) updatedText = `(${updatedText}`;
-      if (updatedText && !updatedText.endsWith(')')) updatedText = `${updatedText})`;
+    } else if (newType === 'parenthetical' || newType === 'pause_mark' || newType === 'silence_mark') {
+      if (updatedText && !updatedText.startsWith('(') && !updatedText.startsWith('[')) {
+        updatedText = `(${updatedText})`;
+      }
     }
 
-    nextBlocks[index] = { ...current, type: newType, text: updatedText };
+    nextBlocks[index] = {
+      ...current,
+      type: newType,
+      text: updatedText,
+      sectionStructure:
+        newType === 'section_divider'
+          ? current.sectionStructure || 'cinematografica'
+          : current.sectionStructure,
+    };
     updateBlocksState(nextBlocks, true);
     setOpenMenu(null);
     setShowPlusMenuAt(null);
@@ -476,6 +649,9 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
       id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       type,
       text: defaultText,
+      visualText: type === 'av_row' ? '' : undefined,
+      audioText: type === 'av_row' ? '' : undefined,
+      sectionStructure: type === 'section_divider' ? 'voz_en_off' : undefined,
     };
     const nextBlocks = [...blocks];
     nextBlocks.splice(index + 1, 0, newBlock);
@@ -492,17 +668,32 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     const current = blocks[index];
     if (!current) return;
 
+    const effectiveStruct = ScreenplayEngine.getEffectiveStructureAtBlock(
+      blocks,
+      index,
+      documentStructure
+    );
+
     if (e.key === 'Tab') {
       e.preventDefault();
-      const nextType = ScreenplayEngine.cycleBlockTypeOnTab(current.type, e.shiftKey);
+      const nextType = ScreenplayEngine.cycleBlockTypeOnTab(
+        current.type,
+        e.shiftKey,
+        effectiveStruct
+      );
       handleChangeBlockType(index, nextType);
       return;
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      // Auto-register character name if user just finished typing a character block
-      if (current.type === 'character' && current.text.trim()) {
+      // Auto-register character/speaker name if user just finished typing a character block
+      if (
+        (current.type === 'character' ||
+          current.type === 'interview_subject' ||
+          current.type === 'voice_cue') &&
+        current.text.trim()
+      ) {
         const cleanName = current.text.trim().toUpperCase();
         const exists = project.characters.some((c) => c.name.toUpperCase() === cleanName);
         if (!exists) {
@@ -520,7 +711,10 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
         }
       }
 
-      const nextType = ScreenplayEngine.getNextBlockTypeOnEnter(current.type);
+      const nextType = ScreenplayEngine.getNextBlockTypeOnEnter(
+        current.type,
+        effectiveStruct
+      );
       handleInsertNewBlockAfter(index, nextType);
       return;
     }
@@ -605,7 +799,9 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     if (updateInScript && oldName && oldName !== updatedChar.name) {
       nextBlocks = nextBlocks.map((b) => {
         if (
-          b.type === 'character' &&
+          (b.type === 'character' ||
+            b.type === 'interview_subject' ||
+            b.type === 'voice_cue') &&
           b.text.trim().toUpperCase() === oldName.trim().toUpperCase()
         ) {
           return { ...b, text: updatedChar.name };
@@ -641,11 +837,80 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
   };
 
   const currentActiveBlock = blocks[activeBlockIndex] || blocks[0];
-  const currentStyleMeta =
-    FRIENDLY_BLOCK_STYLES.find((s) => s.type === currentActiveBlock?.type) ||
-    FRIENDLY_BLOCK_STYLES[1];
+  const currentBlockDef = ScreenplayEngine.getBlockDefinition(
+    currentActiveBlock?.type || 'paragraph'
+  );
 
-  const targetDriveFolder = getTargetDrivePath(project.category);
+  const targetDriveFolder = getTargetDrivePath(
+    project.category,
+    project.title,
+    activeSeasonTitle
+  );
+  const targetLocalFolder = getTargetLocalDirectoryPath(
+    project.category,
+    project.title,
+    activeSeasonTitle
+  );
+
+  // CSS styling helper for any BlockType across all 11 structures
+  const getBlockVisualClasses = (type: BlockType) => {
+    switch (type) {
+      case 'scene_heading':
+      case 'segment_header':
+      case 'music_section':
+        return 'pt-4 font-bold uppercase tracking-wide text-slate-900 dark:text-white border-b border-slate-200/70 dark:border-neutral-800 pb-1';
+      case 'heading_1':
+        return 'pt-4 text-lg font-bold tracking-tight text-slate-900 dark:text-white';
+      case 'heading_2':
+      case 'situation':
+        return 'pt-3 text-sm font-bold text-slate-800 dark:text-neutral-200';
+      case 'character':
+      case 'interview_subject':
+      case 'voice_cue':
+        return 'pt-3 uppercase font-bold text-center pl-16 pr-16';
+      case 'dialogue':
+      case 'voice_over':
+      case 'off_screen':
+      case 'testimony':
+      case 'host_cue':
+      case 'guest_cue':
+        return 'pl-20 pr-20 text-left';
+      case 'parenthetical':
+      case 'pause_mark':
+      case 'silence_mark':
+        return 'pl-28 pr-28 text-center italic opacity-75 text-[11pt]';
+      case 'transition':
+        return 'pt-3 font-bold uppercase text-right pr-4';
+      case 'twist':
+      case 'punchline':
+      case 'emphasis':
+        return 'pt-2 font-semibold bg-amber-500/10 border-l-2 border-amber-500 pl-3 py-1 rounded-r';
+      case 'visual_desc':
+      case 'screen_action':
+      case 'demonstration':
+      case 'archive_footage':
+      case 'reenactment':
+      case 'visual_resource':
+      case 'choreography':
+      case 'shot':
+        return 'pt-1.5 text-blue-950 dark:text-blue-200 bg-blue-500/5 border-l-2 border-blue-500/60 pl-3 py-1 rounded-r';
+      case 'music_cue':
+      case 'sfx_cue':
+      case 'ambience_cue':
+      case 'duration_mark':
+      case 'timecode_mark':
+        return 'pt-1.5 font-mono text-xs uppercase tracking-wider text-purple-800 dark:text-purple-300 bg-purple-500/5 border-l-2 border-purple-500/50 pl-3 py-1 rounded-r';
+      case 'note_block':
+      case 'research_note':
+      case 'production_note':
+      case 'source_ref':
+        return 'pt-1.5 text-xs italic bg-slate-100 dark:bg-neutral-800/70 border-l-2 border-slate-400 pl-3 py-1.5 rounded-r';
+      case 'list_item':
+        return 'pl-6 pt-1';
+      default:
+        return 'pt-1 leading-relaxed';
+    }
+  };
 
   return (
     <div className="flex flex-col h-[calc(100vh-57px)] bg-slate-100 dark:bg-neutral-950 text-slate-900 dark:text-neutral-100 overflow-hidden select-none transition-colors duration-200">
@@ -659,7 +924,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-4 px-5 pt-2.5 pb-1.5">
             <div className="flex items-center gap-4">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <input
                     type="text"
                     value={docTitle}
@@ -668,9 +933,12 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                       onUpdateDocument({ ...activeDocument, title: e.target.value });
                     }}
                     aria-label="Título del documento"
-                    className="text-sm font-bold text-slate-900 dark:text-white bg-transparent border border-transparent hover:border-slate-300 dark:hover:border-neutral-700 focus:border-blue-500 rounded px-1.5 py-0.5 focus:outline-none max-w-[260px] truncate transition-colors"
+                    className="text-sm font-bold text-slate-900 dark:text-white bg-transparent border border-transparent hover:border-slate-300 dark:hover:border-neutral-700 focus:border-blue-500 rounded px-1.5 py-0.5 focus:outline-none max-w-[240px] truncate transition-colors"
                   />
-                  <span className="text-[11px] text-slate-400 dark:text-neutral-500 font-mono hidden sm:inline">
+                  <span
+                    className="text-[10px] text-slate-500 dark:text-neutral-400 font-mono hidden md:inline bg-slate-100 dark:bg-neutral-800 px-2 py-0.5 rounded"
+                    title={`Ruta Local: ${targetLocalFolder} | Ruta Drive: ${targetDriveFolder}`}
+                  >
                     {targetDriveFolder}
                   </span>
                 </div>
@@ -694,21 +962,38 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: 4 }}
                           transition={{ duration: 0.12 }}
-                          className="absolute left-0 top-full mt-1 w-60 py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 text-xs"
+                          className="absolute left-0 top-full mt-1 w-72 py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 text-xs"
                         >
                           <button
                             onClick={() => handleCreateLocalSnapshot('Guardado manual')}
                             className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-slate-100 dark:hover:bg-neutral-800 text-left"
                           >
-                            <span>Guardar versión local segura</span>
+                            <span>Guardar versión local en navegador</span>
                             <span className="text-[10px] font-mono text-slate-400">Ctrl+S</span>
+                          </button>
+                          <button
+                            onClick={handleSaveToLocalDirectory}
+                            className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-slate-100 dark:hover:bg-neutral-800 text-left text-emerald-700 dark:text-emerald-400 font-medium"
+                          >
+                            <div>
+                              <div>Guardar en carpeta local del equipo</div>
+                              <div className="text-[10px] font-mono opacity-75 truncate max-w-[210px]">
+                                {targetLocalFolder}
+                              </div>
+                            </div>
+                            <FolderOpen className="w-3.5 h-3.5 shrink-0" />
                           </button>
                           <button
                             onClick={handleSyncToGoogleDrive}
                             className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-slate-100 dark:hover:bg-neutral-800 text-left text-blue-600 dark:text-blue-400 font-medium"
                           >
-                            <span>Guardar en Google Drive</span>
-                            <CloudUpload className="w-3.5 h-3.5" />
+                            <div>
+                              <div>Guardar en Google Drive</div>
+                              <div className="text-[10px] font-mono opacity-75 truncate max-w-[210px]">
+                                {targetDriveFolder}
+                              </div>
+                            </div>
+                            <CloudUpload className="w-3.5 h-3.5 shrink-0" />
                           </button>
                           <div className="my-1 border-t border-slate-100 dark:border-neutral-800" />
                           <button
@@ -718,7 +1003,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                             }}
                             className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-slate-100 dark:hover:bg-neutral-800 text-left"
                           >
-                            <span>Descargar o Importar (PDF, TXT)...</span>
+                            <span>Descargar o Importar (PDF, TXT, Fountain)...</span>
                             <Download className="w-3.5 h-3.5 text-slate-400" />
                           </button>
                           <div className="my-1 border-t border-slate-100 dark:border-neutral-800" />
@@ -750,29 +1035,45 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: 4 }}
                           transition={{ duration: 0.12 }}
-                          className="absolute left-0 top-full mt-1 w-64 py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 text-xs"
+                          className="absolute left-0 top-full mt-1 w-72 max-h-96 overflow-y-auto py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 text-xs"
                         >
-                          {FRIENDLY_BLOCK_STYLES.map((item) => (
+                          <div className="px-3.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                            Bloques de {effectiveStructureDef.shortName}
+                          </div>
+                          {allowedBlockDefsAtCursor.map((item) => (
                             <button
                               key={item.type}
                               onClick={() => handleInsertNewBlockAfter(activeBlockIndex, item.type)}
-                              className="w-full flex items-center gap-2.5 px-3.5 py-2 hover:bg-slate-100 dark:hover:bg-neutral-800 text-left"
+                              className="w-full flex items-center justify-between gap-2.5 px-3.5 py-2 hover:bg-slate-100 dark:hover:bg-neutral-800 text-left"
                             >
-                              <item.icon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
                               <div>
                                 <div className="font-medium text-slate-800 dark:text-neutral-200">
                                   {item.label}
                                 </div>
                                 <div className="text-[10px] text-slate-400">{item.hint}</div>
                               </div>
+                              <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50 px-1.5 py-0.5 rounded shrink-0">
+                                {item.shortLabel}
+                              </span>
                             </button>
                           ))}
+                          <div className="my-1 border-t border-slate-100 dark:border-neutral-800" />
+                          <div className="px-3.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                            Sección Híbrida (Combinar Estructuras)
+                          </div>
+                          <button
+                            onClick={() => handleInsertHybridSection('voz_en_off')}
+                            className="w-full flex items-center gap-2 px-3.5 py-2 hover:bg-amber-50 dark:hover:bg-neutral-800 text-left text-amber-700 dark:text-amber-300 font-medium"
+                          >
+                            <SplitSquareVertical className="w-3.5 h-3.5 shrink-0" />
+                            <span>+ Añadir nueva sección con otra estructura</span>
+                          </button>
                         </motion.div>
                       )}
                     </AnimatePresence>
                   </div>
 
-                  {/* FORMATO */}
+                  {/* FORMATO Y ESTRUCTURA */}
                   <div className="relative">
                     <button
                       onClick={() => setOpenMenu(openMenu === 'format' ? null : 'format')}
@@ -780,7 +1081,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                         openMenu === 'format' ? 'bg-slate-100 dark:bg-neutral-800 font-medium' : ''
                       }`}
                     >
-                      Formato
+                      Formato y Estructura
                     </button>
                     <AnimatePresence>
                       {openMenu === 'format' && (
@@ -789,35 +1090,33 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: 4 }}
                           transition={{ duration: 0.12 }}
-                          className="absolute left-0 top-full mt-1 w-64 py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 text-xs"
+                          className="absolute left-0 top-full mt-1 w-80 max-h-[420px] overflow-y-auto py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 text-xs"
                         >
                           <div className="px-3.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                            Tipo de Documento
+                            Cambiar Estructura del Guion (Conserva tu texto)
                           </div>
-                          <button
-                            onClick={() => {
-                              onUpdateDocument({ ...activeDocument, templateType: 'screenplay' });
-                              setOpenMenu(null);
-                            }}
-                            className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-slate-100 dark:hover:bg-neutral-800 text-left"
-                          >
-                            <span>Guion Estándar (Cine / Series)</span>
-                            {activeDocument.templateType !== 'two_column' && (
-                              <Check className="w-3.5 h-3.5 text-blue-600" />
-                            )}
-                          </button>
-                          <button
-                            onClick={() => {
-                              onUpdateDocument({ ...activeDocument, templateType: 'two_column' });
-                              setOpenMenu(null);
-                            }}
-                            className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-slate-100 dark:hover:bg-neutral-800 text-left"
-                          >
-                            <span>Dos Columnas (YouTube / Video y Audio)</span>
-                            {activeDocument.templateType === 'two_column' && (
-                              <Check className="w-3.5 h-3.5 text-blue-600" />
-                            )}
-                          </button>
+                          {STRUCTURES_CATALOG.map((struct) => {
+                            const isSelected = documentStructure === struct.id;
+                            return (
+                              <button
+                                key={struct.id}
+                                onClick={() => handleRequestStructureChange(struct.id)}
+                                className="w-full flex items-start justify-between gap-2 px-3.5 py-2 hover:bg-slate-100 dark:hover:bg-neutral-800 text-left"
+                              >
+                                <div>
+                                  <div className="font-semibold text-slate-800 dark:text-neutral-200">
+                                    {struct.code}. {struct.name}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400">
+                                    {struct.description}
+                                  </div>
+                                </div>
+                                {isSelected && (
+                                  <Check className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
+                                )}
+                              </button>
+                            );
+                          })}
                           <div className="my-1 border-t border-slate-100 dark:border-neutral-800" />
                           <div className="px-3.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                             Color de la Hoja en Modo Oscuro
@@ -859,7 +1158,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                         openMenu === 'tools' ? 'bg-slate-100 dark:bg-neutral-800 font-medium' : ''
                       }`}
                     >
-                      Asistente
+                      Asistente y Metodología
                     </button>
                     <AnimatePresence>
                       {openMenu === 'tools' && (
@@ -870,6 +1169,16 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                           transition={{ duration: 0.12 }}
                           className="absolute left-0 top-full mt-1 w-64 py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 text-xs"
                         >
+                          <button
+                            onClick={() => {
+                              setShowMethodologyGuide(!showMethodologyGuide);
+                              setOpenMenu(null);
+                            }}
+                            className="w-full flex items-center gap-2 px-3.5 py-2 hover:bg-slate-100 dark:hover:bg-neutral-800 text-left font-medium text-emerald-700 dark:text-emerald-400"
+                          >
+                            <Compass className="w-3.5 h-3.5" />
+                            <span>Guía de Metodología Narrativa</span>
+                          </button>
                           <button
                             onClick={() => {
                               setShowAssistantDrawer(!showAssistantDrawer);
@@ -953,8 +1262,18 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                         </button>
                       </div>
                       <p className="text-[11px] text-slate-500 dark:text-neutral-400 leading-relaxed">
-                        Tu trabajo se guarda letra por letra en IndexedDB y espejo LocalStorage.
+                        Directorio local asignado:{' '}
+                        <code className="font-mono text-[10px] text-emerald-600 dark:text-emerald-400">
+                          {targetLocalFolder}
+                        </code>
                       </p>
+                      <button
+                        onClick={handleSaveToLocalDirectory}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-semibold hover:bg-emerald-100 transition-colors"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        <span>Guardar archivo en carpeta local</span>
+                      </button>
 
                       {activeDocument.snapshots && activeDocument.snapshots.length > 0 && (
                         <div className="pt-2 border-t border-slate-100 dark:border-neutral-800 max-h-40 overflow-y-auto space-y-1">
@@ -1004,9 +1323,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                 title={`Sincronizar en Google Drive: ${targetDriveFolder}`}
               >
                 <CloudUpload className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                <span>
-                  {isSyncingDrive ? 'Sincronizando...' : 'Guardar en Drive'}
-                </span>
+                <span>{isSyncingDrive ? 'Sincronizando...' : 'Guardar en Drive'}</span>
               </motion.button>
 
               {activeDocument.driveWebViewLink && (
@@ -1108,17 +1425,83 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                 </AnimatePresence>
               </div>
 
-              {/* Word / Google Docs Style Paragraph Element Dropdown */}
-              {activeDocument.templateType !== 'two_column' && (
+              {/* Active Structure Selector Pill (A-K) */}
+              <div className="relative">
+                <button
+                  onClick={() => setOpenMenu(openMenu === 'structure' ? null : 'structure')}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-blue-700 dark:text-blue-300 font-semibold hover:border-blue-400 transition-colors"
+                  title="Cambiar estructura de escritura o insertar sección híbrida"
+                >
+                  <Layers className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    Estructura {documentStructureDef.code}: {documentStructureDef.shortName}
+                  </span>
+                  <ChevronDown className="w-3 h-3 opacity-70" />
+                </button>
+
+                <AnimatePresence>
+                  {openMenu === 'structure' && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 4 }}
+                      className="absolute left-0 top-full mt-1 w-80 max-h-96 overflow-y-auto py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 text-xs"
+                    >
+                      <div className="px-3.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Modalidad de Estructura del Guion (A–K)
+                      </div>
+                      {STRUCTURES_CATALOG.map((struct) => {
+                        const isCurrent = documentStructure === struct.id;
+                        return (
+                          <button
+                            key={struct.id}
+                            onClick={() => handleRequestStructureChange(struct.id)}
+                            className={`w-full flex items-start justify-between gap-2 px-3.5 py-2 text-left transition-colors ${
+                              isCurrent
+                                ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
+                                : 'hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-700 dark:text-neutral-200'
+                            }`}
+                          >
+                            <div>
+                              <div className="font-semibold">
+                                {struct.code}. {struct.name}
+                              </div>
+                              <div className="text-[10px] text-slate-400">
+                                {struct.description}
+                              </div>
+                            </div>
+                            {isCurrent && (
+                              <Check className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
+                            )}
+                          </button>
+                        );
+                      })}
+                      <div className="my-1 border-t border-slate-100 dark:border-neutral-800" />
+                      <button
+                        onClick={() => handleInsertHybridSection('cinematografica')}
+                        className="w-full flex items-center gap-2 px-3.5 py-2 hover:bg-amber-50 dark:hover:bg-neutral-800 text-amber-700 dark:text-amber-300 font-semibold text-left"
+                      >
+                        <SplitSquareVertical className="w-3.5 h-3.5" />
+                        <span>+ Dividir e insertar sección con otra estructura</span>
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Dynamic Structure-Aware Block Type Selector */}
+              {documentStructure !== 'audiovisual_tecnico' && (
                 <div className="relative">
                   <button
                     onClick={() => setOpenMenu(openMenu === 'style' ? null : 'style')}
-                    className="flex items-center justify-between gap-3 px-3 py-1 rounded-md bg-white dark:bg-neutral-800 border border-slate-200 dark:border-neutral-700 text-slate-800 dark:text-neutral-100 font-medium hover:border-blue-500 transition-colors min-w-[220px]"
-                    title="Cambiar qué tipo de línea estás escribiendo (También puedes pulsar Tab)"
+                    className="flex items-center justify-between gap-3 px-3 py-1 rounded-md bg-white dark:bg-neutral-800 border border-slate-200 dark:border-neutral-700 text-slate-800 dark:text-neutral-100 font-medium hover:border-blue-500 transition-colors min-w-[210px]"
+                    title="Cambiar qué tipo de bloque estás escribiendo (También puedes pulsar Tab)"
                   >
                     <div className="flex items-center gap-2 truncate">
-                      <currentStyleMeta.icon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-                      <span className="truncate">{currentStyleMeta.label}</span>
+                      <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
+                        {currentBlockDef.shortLabel}
+                      </span>
+                      <span className="truncate">{currentBlockDef.label}</span>
                     </div>
                     <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   </button>
@@ -1129,33 +1512,34 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                         initial={{ opacity: 0, y: 4 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 4 }}
-                        className="absolute left-0 top-full mt-1 w-72 py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 text-xs"
+                        className="absolute left-0 top-full mt-1 w-76 max-h-96 overflow-y-auto py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 text-xs"
                       >
                         <div className="px-3.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                          Estilo del párrafo actual (Atajo: Tecla Tab)
+                          Bloques de {effectiveStructureDef.shortName} (Atajo: Tab)
                         </div>
-                        {FRIENDLY_BLOCK_STYLES.map((style) => {
+                        {allowedBlockDefsAtCursor.map((style) => {
                           const isCurrent = currentActiveBlock?.type === style.type;
                           return (
                             <button
                               key={style.type}
                               onClick={() => handleChangeBlockType(activeBlockIndex, style.type)}
-                              className={`w-full flex items-start gap-2.5 px-3.5 py-2 text-left transition-colors ${
+                              className={`w-full flex items-start justify-between gap-2.5 px-3.5 py-2 text-left transition-colors ${
                                 isCurrent
                                   ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
                                   : 'hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-700 dark:text-neutral-200'
                               }`}
                             >
-                              <style.icon className="w-4 h-4 mt-0.5 text-blue-600 dark:text-blue-400 shrink-0" />
                               <div className="flex-1">
-                                <div className="font-semibold flex items-center justify-between">
+                                <div className="font-semibold flex items-center gap-2">
                                   <span>{style.label}</span>
-                                  {isCurrent && <Check className="w-3.5 h-3.5 text-blue-600" />}
                                 </div>
                                 <div className="text-[11px] text-slate-400 dark:text-neutral-400">
                                   {style.hint}
                                 </div>
                               </div>
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-neutral-800 text-slate-600 dark:text-neutral-300 shrink-0">
+                                {style.shortLabel}
+                              </span>
                             </button>
                           );
                         })}
@@ -1165,17 +1549,35 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                 </div>
               )}
 
+              {/* Optional Narrative Methodology Guide Pill */}
+              <button
+                onClick={() => setShowMethodologyGuide(!showMethodologyGuide)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-colors ${
+                  showMethodologyGuide
+                    ? 'bg-emerald-600 text-white shadow-2xs'
+                    : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50'
+                }`}
+                title="Abrir o cerrar guía de metodología narrativa opcional"
+              >
+                <Compass className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">
+                  {activeMethodology.id !== 'none'
+                    ? `Guía: ${activeMethodology.name.split(' ')[0]}...`
+                    : 'Guía Narrativa'}
+                </span>
+              </button>
+
               {/* Step-by-step Beginner Assistant Pill */}
               <button
                 onClick={() => setShowAssistantDrawer(!showAssistantDrawer)}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors ${
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-colors ${
                   showAssistantDrawer
                     ? 'bg-blue-600 text-white shadow-2xs'
                     : 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50'
                 }`}
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Escribir con ayuda paso a paso</span>
+                <span className="hidden xl:inline">Asistente paso a paso</span>
               </button>
             </div>
 
@@ -1224,7 +1626,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
 
       {/* Main Workspace Area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Collapsible Outline / Index Sidebar (like Google Docs Document Outline) */}
+        {/* Left Collapsible Outline / Index Sidebar */}
         <AnimatePresence initial={false}>
           {!isDistractionFree && isSidebarOpen && (
             <motion.aside
@@ -1243,7 +1645,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                       : 'text-slate-500 dark:text-neutral-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  Escenas
+                  Índice
                 </button>
                 <button
                   onClick={() => setSidebarTab('characters')}
@@ -1253,7 +1655,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                       : 'text-slate-500 dark:text-neutral-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  Personajes ({project.characters.length})
+                  Voces/Personajes ({project.characters.length})
                 </button>
                 {project.category === 'series' && (
                   <button
@@ -1322,20 +1724,17 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                           if (!project.seasons || project.seasons.length === 0) return;
                           const firstSeason = project.seasons[0];
                           const nextEpNum = firstSeason.episodes.length + 1;
+                          const defaultStruct =
+                            project.defaultStructure || activeDocument.templateType || 'cinematografica';
                           const newEp: ScriptDocument = {
                             id: `ep-${Date.now()}`,
                             projectId: project.id,
                             seasonId: firstSeason.id,
                             episodeNumber: nextEpNum,
                             title: `Capítulo ${nextEpNum}`,
-                            templateType: 'screenplay',
-                            blocks: [
-                              {
-                                id: `blk-${Date.now()}`,
-                                type: 'scene_heading',
-                                text: 'INT. LUGAR - DÍA',
-                              },
-                            ],
+                            templateType: defaultStruct,
+                            methodologyId: project.methodologyId,
+                            blocks: ScreenplayEngine.getInitialBlocksForStructure(defaultStruct),
                             createdAt: new Date().toISOString(),
                             updatedAt: new Date().toISOString(),
                           };
@@ -1391,6 +1790,79 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
             </button>
           )}
 
+          {/* Non-Intrusive Optional Narrative Methodology Guide Panel */}
+          <AnimatePresence>
+            {showMethodologyGuide && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="w-full max-w-[8.5in] mb-6 p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-emerald-200 dark:border-emerald-900/60 shadow-md text-xs space-y-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-neutral-800">
+                  <div className="flex items-center gap-2">
+                    <Compass className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <span className="font-bold text-slate-900 dark:text-white">
+                      Guía de Metodología Narrativa (Opcional y No Intrusiva)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={activeMethodologyId}
+                      onChange={(e) => {
+                        const nextId = e.target.value as NarrativeMethodologyId;
+                        onUpdateDocument({
+                          ...activeDocument,
+                          methodologyId: nextId,
+                        });
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-neutral-800 border border-slate-200 dark:border-neutral-700 text-xs font-medium text-slate-800 dark:text-neutral-200"
+                    >
+                      {NARRATIVE_METHODOLOGIES.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.id === 'none' ? m.name : `[${m.categoryLabel}] ${m.name}`}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => setShowMethodologyGuide(false)}
+                      className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {activeMethodology.id === 'none' ? (
+                  <p className="text-slate-500 dark:text-neutral-400">
+                    Estás en escritura libre sin metodología activa. Si deseas consultar una estructura narrativa de apoyo (Tres Actos, Viaje del Héroe, Tramas A/B/C, Gancho-Desarrollo, AIDA, etc.) sin alterar tu guion, selecciónala en el desplegable superior.
+                  </p>
+                ) : (
+                  <div className="space-y-2.5">
+                    <p className="text-slate-600 dark:text-neutral-300">
+                      {activeMethodology.description}
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
+                      {activeMethodology.stages.map((stage, i) => (
+                        <div
+                          key={i}
+                          className="p-2.5 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40 space-y-1"
+                        >
+                          <div className="font-bold text-emerald-900 dark:text-emerald-300">
+                            {stage.title}
+                          </div>
+                          <p className="text-[11px] text-slate-600 dark:text-neutral-400 leading-relaxed">
+                            {stage.guidance}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Step-by-step Guided Assistant Drawer */}
           <AnimatePresence>
             {showAssistantDrawer && (
@@ -1419,8 +1891,8 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
             }}
             className="flex flex-col items-center gap-8 pb-36"
           >
-            {activeDocument.templateType === 'two_column' ? (
-              /* Two-Column Audio/Video Document Sheet */
+            {documentStructure === 'audiovisual_tecnico' ? (
+              /* Structure E: Full Two-Column Audio/Video Document Sheet */
               <div
                 className={`screenplay-page ${
                   paperAppearance === 'adaptive' ? 'page-adaptive' : ''
@@ -1431,13 +1903,13 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                     {docTitle}
                   </h2>
                   <p className="text-xs opacity-60 font-mono mt-0.5">
-                    Guion Audiovisual a Dos Columnas (Video y Audio)
+                    Estructura E: Guion Audiovisual Técnico (Dos Columnas VIDEO / AUDIO)
                   </p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 pb-2 border-b border-slate-300 dark:border-neutral-700 font-bold text-xs uppercase text-blue-600 dark:text-blue-400 font-mono">
-                  <div>QUÉ SE VE (Video / Cámara / Imágenes)</div>
-                  <div>QUÉ SE ESCUCHA (Voz / Diálogo / Música)</div>
+                  <div>VIDEO (Imagen / Cámara / Acción Visual)</div>
+                  <div>AUDIO (Narración / Diálogo / Música / Efectos)</div>
                 </div>
 
                 <div className="divide-y divide-slate-200 dark:divide-neutral-800">
@@ -1449,9 +1921,10 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                             3,
                             Math.ceil((block.visualText || block.text).length / 35)
                           )}
-                          value={block.visualText || block.text}
+                          value={block.visualText ?? block.text}
+                          onFocus={() => setActiveBlockIndex(idx)}
                           onChange={(e) => handleTwoColumnChange(idx, 'visualText', e.target.value)}
-                          placeholder="Describe la imagen o escena en pantalla..."
+                          placeholder="Describe la imagen, plano o acción visual..."
                           className="w-full bg-transparent resize-none focus:outline-none focus:bg-blue-50/40 dark:focus:bg-neutral-800/30 p-2 rounded leading-relaxed"
                         />
                       </div>
@@ -1459,8 +1932,9 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                         <textarea
                           rows={Math.max(3, Math.ceil((block.audioText || '').length / 35))}
                           value={block.audioText || ''}
+                          onFocus={() => setActiveBlockIndex(idx)}
                           onChange={(e) => handleTwoColumnChange(idx, 'audioText', e.target.value)}
-                          placeholder="Escribe la narración, diálogo o música..."
+                          placeholder="Escribe la locución, diálogo, música o SFX..."
                           className="w-full bg-transparent resize-none focus:outline-none focus:bg-blue-50/40 dark:focus:bg-neutral-800/30 p-2 rounded leading-relaxed border-l border-slate-200 dark:border-neutral-800 pl-4"
                         />
                       </div>
@@ -1470,16 +1944,16 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
 
                 <div className="pt-4 flex justify-center">
                   <button
-                    onClick={() => handleInsertNewBlockAfter(blocks.length - 1, 'action')}
+                    onClick={() => handleInsertNewBlockAfter(blocks.length - 1, 'av_row')}
                     className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>Añadir siguiente fila</span>
+                    <span>Añadir fila VIDEO / AUDIO</span>
                   </button>
                 </div>
               </div>
             ) : (
-              /* Standard Paginated US Letter Sheets (Google Docs / Word feel) */
+              /* Paginated US Letter Sheets supporting all structures (A-K) and Hybrid sections */
               paginatedPages.map((page) => (
                 <div
                   key={page.pageNumber}
@@ -1493,35 +1967,121 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                     </div>
                   )}
 
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     {page.blocks.map((block) => {
                       const globalIndex = blocks.findIndex((b) => b.id === block.id);
                       const isFocused = activeBlockIndex === globalIndex;
-                      const styleMeta =
-                        FRIENDLY_BLOCK_STYLES.find((s) => s.type === block.type) ||
-                        FRIENDLY_BLOCK_STYLES[1];
+                      const blockDef = ScreenplayEngine.getBlockDefinition(block.type);
+                      const allowedAtThisBlock = ScreenplayEngine.getAllowedBlocksForPosition(
+                        blocks,
+                        globalIndex,
+                        documentStructure
+                      );
+
+                      // Render Hybrid Section Divider with inline structure selector
+                      if (block.type === 'section_divider') {
+                        const secStruct = normalizeStructureType(
+                          block.sectionStructure || 'cinematografica'
+                        );
+                        return (
+                          <div
+                            key={block.id}
+                            className="my-4 p-3 rounded-xl bg-amber-50/80 dark:bg-neutral-800/80 border border-amber-300/70 dark:border-amber-700/50 font-ui"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                                <SplitSquareVertical className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                                <input
+                                  type="text"
+                                  value={block.text}
+                                  onFocus={() => setActiveBlockIndex(globalIndex)}
+                                  onChange={(e) => handleBlockChange(globalIndex, e.target.value)}
+                                  placeholder="Título de la sección (Ej: Introducción en Voz en Off)"
+                                  className="flex-1 bg-transparent text-xs font-bold text-slate-900 dark:text-white focus:outline-none"
+                                />
+                              </div>
+
+                              <div className="flex items-center gap-1.5 text-[11px]">
+                                <span className="text-slate-500 dark:text-neutral-400">
+                                  Estructura de esta sección:
+                                </span>
+                                <select
+                                  value={secStruct}
+                                  onChange={(e) =>
+                                    handleChangeSectionStructure(
+                                      globalIndex,
+                                      e.target.value as ScriptStructureType
+                                    )
+                                  }
+                                  className="px-2 py-1 rounded-md bg-white dark:bg-neutral-900 border border-amber-300 dark:border-neutral-700 text-xs font-semibold text-amber-900 dark:text-amber-300 focus:outline-none"
+                                >
+                                  {STRUCTURES_CATALOG.filter((s) => s.id !== 'hibrida').map(
+                                    (s) => (
+                                      <option key={s.id} value={s.id}>
+                                        {s.code}. {s.shortName}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      // Render inline Two-Column row (e.g. inside a Hybrid script)
+                      if (block.type === 'av_row') {
+                        return (
+                          <div
+                            key={block.id}
+                            className="my-2 p-3 rounded-lg border border-slate-200 dark:border-neutral-800 grid grid-cols-2 gap-4 text-xs font-mono relative group"
+                          >
+                            <div>
+                              <div className="text-[10px] font-bold uppercase text-blue-600 dark:text-blue-400 mb-1">
+                                VIDEO (Imagen)
+                              </div>
+                              <textarea
+                                rows={Math.max(
+                                  2,
+                                  Math.ceil((block.visualText || block.text).length / 32)
+                                )}
+                                value={block.visualText ?? block.text}
+                                onFocus={() => setActiveBlockIndex(globalIndex)}
+                                onChange={(e) =>
+                                  handleTwoColumnChange(globalIndex, 'visualText', e.target.value)
+                                }
+                                placeholder="Acción o imagen en pantalla..."
+                                className="w-full bg-transparent resize-none focus:outline-none"
+                              />
+                            </div>
+                            <div className="border-l border-slate-200 dark:border-neutral-800 pl-3">
+                              <div className="text-[10px] font-bold uppercase text-purple-600 dark:text-purple-400 mb-1">
+                                AUDIO (Voz / Sonido)
+                              </div>
+                              <textarea
+                                rows={Math.max(2, Math.ceil((block.audioText || '').length / 32))}
+                                value={block.audioText || ''}
+                                onFocus={() => setActiveBlockIndex(globalIndex)}
+                                onChange={(e) =>
+                                  handleTwoColumnChange(globalIndex, 'audioText', e.target.value)
+                                }
+                                placeholder="Narración, diálogo o efectos..."
+                                className="w-full bg-transparent resize-none focus:outline-none"
+                              />
+                            </div>
+                          </div>
+                        );
+                      }
 
                       return (
                         <div
                           key={block.id}
-                          className={`relative group ${
-                            block.type === 'scene_heading'
-                              ? 'pt-4 font-bold uppercase tracking-wide'
-                              : block.type === 'character'
-                              ? 'pt-3 uppercase font-bold text-center pl-16 pr-16'
-                              : block.type === 'dialogue'
-                              ? 'pl-24 pr-24 text-left'
-                              : block.type === 'parenthetical'
-                              ? 'pl-32 pr-32 text-left italic opacity-75 text-[11pt]'
-                              : block.type === 'transition'
-                              ? 'pt-3 font-bold uppercase text-right pr-4'
-                              : 'pt-1 leading-normal'
-                          }`}
+                          className={`relative group ${getBlockVisualClasses(block.type)}`}
                         >
                           {/* Interactive Left Margin Control (Click to change block style or insert) */}
                           <div
                             className={`absolute -left-24 top-1 flex items-center gap-1 transition-opacity ${
-                              isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-75'
+                              isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-80'
                             }`}
                           >
                             <button
@@ -1531,11 +2091,11 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                                   showPlusMenuAt === globalIndex ? null : globalIndex
                                 )
                               }
-                              title="Haz clic para cambiar el tipo de línea o insertar"
+                              title="Haz clic para cambiar el tipo de bloque o insertar sección"
                               className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-ui font-medium bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-600 border border-slate-200 transition-colors"
                             >
                               <Plus className="w-2.5 h-2.5" />
-                              <span>{styleMeta.shortcut}</span>
+                              <span>{blockDef.shortLabel}</span>
                             </button>
                           </div>
 
@@ -1546,10 +2106,10 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                                 initial={{ opacity: 0, scale: 0.95, y: 4 }}
                                 animate={{ opacity: 1, scale: 1, y: 0 }}
                                 exit={{ opacity: 0, scale: 0.95, y: 4 }}
-                                className="absolute left-0 top-full mt-1 z-40 w-72 py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-700 rounded-xl shadow-2xl font-ui text-xs text-slate-800 dark:text-neutral-100"
+                                className="absolute left-0 top-full mt-1 z-40 w-76 max-h-80 overflow-y-auto py-1.5 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-700 rounded-xl shadow-2xl font-ui text-xs text-slate-800 dark:text-neutral-100"
                               >
                                 <div className="px-3 py-1 text-[10px] font-semibold uppercase text-slate-400 flex items-center justify-between">
-                                  <span>¿Qué quieres escribir en esta línea?</span>
+                                  <span>Bloques disponibles en esta sección</span>
                                   <button
                                     onClick={() => setShowPlusMenuAt(null)}
                                     className="text-slate-400 hover:text-slate-600"
@@ -1557,20 +2117,34 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                                     <X className="w-3 h-3" />
                                   </button>
                                 </div>
-                                {FRIENDLY_BLOCK_STYLES.map((item) => (
+                                {allowedAtThisBlock.map((item) => (
                                   <button
                                     key={item.type}
                                     type="button"
                                     onClick={() => handleChangeBlockType(globalIndex, item.type)}
-                                    className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-blue-50 dark:hover:bg-neutral-800 text-left transition-colors"
+                                    className="w-full flex items-center justify-between gap-2.5 px-3 py-2 hover:bg-blue-50 dark:hover:bg-neutral-800 text-left transition-colors"
                                   >
-                                    <item.icon className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
                                     <div>
                                       <div className="font-semibold">{item.label}</div>
                                       <div className="text-[10px] text-slate-400">{item.hint}</div>
                                     </div>
+                                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-neutral-800 text-blue-600 dark:text-blue-400 shrink-0">
+                                      {item.shortLabel}
+                                    </span>
                                   </button>
                                 ))}
+                                <div className="my-1 border-t border-slate-100 dark:border-neutral-800" />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowPlusMenuAt(null);
+                                    handleInsertHybridSection('voz_en_off');
+                                  }}
+                                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-amber-50 dark:hover:bg-neutral-800 text-left text-amber-700 dark:text-amber-300 font-semibold"
+                                >
+                                  <SplitSquareVertical className="w-3.5 h-3.5" />
+                                  <span>+ Nueva sección con otra estructura (Híbrido)</span>
+                                </button>
                               </motion.div>
                             )}
                           </AnimatePresence>
@@ -1584,21 +2158,16 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                             onFocus={() => setActiveBlockIndex(globalIndex)}
                             onChange={(e) => handleBlockChange(globalIndex, e.target.value)}
                             onKeyDown={(e) => handleBlockKeyDown(globalIndex, e)}
-                            placeholder={
-                              block.type === 'scene_heading'
-                                ? 'INT. LUGAR - DÍA (Ej: INT. SALA DE ESTAR - NOCHE)'
-                                : block.type === 'character'
-                                ? 'NOMBRE DEL PERSONAJE QUE HABLA'
-                                : block.type === 'dialogue'
-                                ? 'Escribe lo que dice el personaje...'
-                                : block.type === 'parenthetical'
-                                ? '(con voz suave)'
-                                : block.type === 'transition'
-                                ? 'CORTE A:'
-                                : 'Escribe qué sucede o pulsa "/" para elegir elemento...'
-                            }
-                            className={`w-full bg-transparent font-script resize-none focus:outline-none focus:bg-blue-500/5 rounded-xs transition-colors overflow-hidden ${
-                              block.type === 'character' || block.type === 'parenthetical'
+                            placeholder={blockDef.placeholder}
+                            className={`w-full bg-transparent ${
+                              documentStructure === 'estandar_flexible' ? 'font-ui' : 'font-script'
+                            } resize-none focus:outline-none focus:bg-blue-500/5 rounded-xs transition-colors overflow-hidden ${
+                              block.type === 'character' ||
+                              block.type === 'interview_subject' ||
+                              block.type === 'voice_cue' ||
+                              block.type === 'parenthetical' ||
+                              block.type === 'pause_mark' ||
+                              block.type === 'silence_mark'
                                 ? 'text-center'
                                 : block.type === 'transition'
                                 ? 'text-right'
@@ -1636,21 +2205,107 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
           {/* Gentle Non-Intrusive Bottom Helper Bar */}
           {!isDistractionFree && (
             <div className="fixed bottom-4 right-6 z-20 hidden lg:flex items-center gap-3 px-3.5 py-2 rounded-xl bg-white/95 dark:bg-neutral-900/95 border border-slate-200 dark:border-neutral-800 shadow-md text-[11px] text-slate-600 dark:text-neutral-400 backdrop-blur-xs">
-              <span>
-                <strong>Enter</strong>: Siguiente línea lógica
+              <span className="text-blue-600 dark:text-blue-400 font-semibold">
+                {effectiveStructureDef.shortName}
               </span>
               <span>·</span>
               <span>
-                <strong>Tab</strong>: Cambiar entre Acción / Personaje / Diálogo
+                <strong>Enter</strong>: Siguiente bloque lógico
               </span>
               <span>·</span>
               <span>
-                <strong>/</strong>: Menú rápido
+                <strong>Tab</strong>: Alternar bloque en esta estructura
+              </span>
+              <span>·</span>
+              <span>
+                <strong>/</strong>: Menú de bloques
               </span>
             </div>
           )}
         </div>
       </div>
+
+      {/* Preview & Confirmation Modal for Ambiguous Structure Conversion (e.g. 1-col <-> 2-col) */}
+      <AnimatePresence>
+        {pendingStructureChange && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 dark:bg-black/60 backdrop-blur-xs"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full max-w-lg bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl shadow-2xl p-6 space-y-4"
+            >
+              <div className="flex items-center gap-2.5 text-blue-600 dark:text-blue-400">
+                <ArrowRightLeft className="w-5 h-5" />
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Vista previa de conversión de estructura
+                </h3>
+              </div>
+
+              <p className="text-xs text-slate-600 dark:text-neutral-300 leading-relaxed">
+                {pendingStructureChange.summary}
+              </p>
+
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-neutral-800/70 border border-slate-200 dark:border-neutral-700 max-h-48 overflow-y-auto space-y-2 text-xs font-mono">
+                <div className="text-[10px] font-sans font-semibold uppercase text-slate-400">
+                  Muestra de adaptación ({pendingStructureChange.convertedBlocks.length} bloques conservados):
+                </div>
+                {pendingStructureChange.convertedBlocks.slice(0, 4).map((b, i) => (
+                  <div
+                    key={i}
+                    className="p-2 rounded bg-white dark:bg-neutral-900 border border-slate-200/70 dark:border-neutral-800 text-[11px]"
+                  >
+                    {b.type === 'av_row' ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-blue-600 font-bold">VIDEO:</span>{' '}
+                          {b.visualText || '(Vacío)'}
+                        </div>
+                        <div>
+                          <span className="text-purple-600 font-bold">AUDIO:</span>{' '}
+                          {b.audioText || '(Vacío)'}
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <span className="text-blue-600 font-bold">
+                          [{ScreenplayEngine.getBlockDefinition(b.type).shortLabel}]:
+                        </span>{' '}
+                        {b.text || '(Línea en blanco)'}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-[11px] text-slate-500 dark:text-neutral-400">
+                No se eliminará ninguna palabra y podrás revertir el cambio en cualquier momento con{' '}
+                <strong>Ctrl+Z</strong>.
+              </p>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  onClick={() => setPendingStructureChange(null)}
+                  className="px-3.5 py-1.5 text-xs font-medium text-slate-600 dark:text-neutral-400 hover:text-slate-900 dark:hover:text-white"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmStructureConversion}
+                  className="px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-xs"
+                >
+                  Aplicar conversión segura
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Mandatory Confirmation Dialog for Updating Existing File in Google Drive */}
       <AnimatePresence>

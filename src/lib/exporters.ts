@@ -1,5 +1,5 @@
 /**
- * Gerstep Script Studio - Professional Exporters & Importers (PDF, Fountain, TXT, JSON)
+ * Gerstep Script Studio - Exporters & Importers supporting all 11 Script Structures
  */
 import { jsPDF } from 'jspdf';
 import { BlockType, ScriptBlock } from '../types/script';
@@ -13,11 +13,7 @@ export interface PDFExportOptions {
 }
 
 export const Exporters = {
-  /**
-   * Generates a genuine paginated US Letter PDF according to Hollywood/Film standard margins
-   */
   async exportToPDF(blocks: ScriptBlock[], options: PDFExportOptions): Promise<void> {
-    // US Letter size in points: 612 x 792 pt (8.5 x 11 in)
     const doc = new jsPDF({
       orientation: 'portrait',
       unit: 'pt',
@@ -25,11 +21,10 @@ export const Exporters = {
     });
 
     const PAGE_WIDTH = 612;
-    const PAGE_HEIGHT = 792;
-    const LEFT_MARGIN = 108; // 1.5 inches for binding
-    const RIGHT_MARGIN = 540; // 612 - 72 (1 inch right margin)
-    const TOP_MARGIN = 72; // 1.0 inch
-    const BOTTOM_MARGIN = 720; // 792 - 72 (1.0 inch)
+    const LEFT_MARGIN = 108;
+    const RIGHT_MARGIN = 540;
+    const TOP_MARGIN = 72;
+    const BOTTOM_MARGIN = 720;
     const LINE_HEIGHT = 14;
 
     doc.setFont('courier', 'normal');
@@ -37,7 +32,6 @@ export const Exporters = {
 
     let pageNumber = 1;
 
-    // Optional Title Page
     if (options.includeTitlePage) {
       doc.setFont('courier', 'bold');
       doc.setFontSize(22);
@@ -53,17 +47,14 @@ export const Exporters = {
 
       doc.setFont('courier', 'normal');
       doc.setFontSize(10);
-      doc.text('GERSTEP SCRIPT STUDIO', PAGE_WIDTH / 2, 700, { align: 'center' });
-      doc.text('Borrador de Trabajo — Formato Estándar', PAGE_WIDTH / 2, 715, { align: 'center' });
+      doc.text('GERSTEP SCRIPT STUDIO / CINEDOCS', PAGE_WIDTH / 2, 700, { align: 'center' });
 
       doc.addPage();
     }
 
     let y = TOP_MARGIN;
 
-    // Helper to add page number header
     const printPageHeader = (pNum: number) => {
-      // By industry standard, Page 1 doesn't display a header number
       if (pNum > 1) {
         doc.setFont('courier', 'normal');
         doc.setFontSize(10);
@@ -76,135 +67,159 @@ export const Exporters = {
 
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
+
+      if (block.type === 'av_row') {
+        const vis = (block.visualText || block.text || '').trim();
+        const aud = (block.audioText || '').trim();
+        if (!vis && !aud) continue;
+
+        const colWidth = (RIGHT_MARGIN - LEFT_MARGIN - 20) / 2;
+        const visLines = doc.splitTextToSize(vis || '—', colWidth);
+        const audLines = doc.splitTextToSize(aud || '—', colWidth);
+        const rowLinesCount = Math.max(visLines.length, audLines.length);
+        const estimatedHeight = rowLinesCount * LINE_HEIGHT + LINE_HEIGHT;
+
+        if (y + estimatedHeight > BOTTOM_MARGIN) {
+          doc.addPage();
+          pageNumber++;
+          printPageHeader(pageNumber);
+          y = TOP_MARGIN;
+        } else {
+          y += LINE_HEIGHT * 0.8;
+        }
+
+        for (let r = 0; r < rowLinesCount; r++) {
+          if (visLines[r]) doc.text(visLines[r], LEFT_MARGIN, y);
+          if (audLines[r]) doc.text(audLines[r], LEFT_MARGIN + colWidth + 20, y);
+          y += LINE_HEIGHT;
+        }
+        continue;
+      }
+
       const text = block.text || '';
       if (!text.trim()) continue;
 
-      let estimatedHeight = LINE_HEIGHT;
+      const blockDef = ScreenplayEngine.getBlockDefinition(block.type);
       let lines: string[] = [];
 
-      switch (block.type) {
-        case 'scene_heading': {
-          lines = doc.splitTextToSize(text.toUpperCase(), RIGHT_MARGIN - LEFT_MARGIN);
-          estimatedHeight = lines.length * LINE_HEIGHT + LINE_HEIGHT * 2; // space before
-          if (y + estimatedHeight > BOTTOM_MARGIN) {
-            doc.addPage();
-            pageNumber++;
-            printPageHeader(pageNumber);
-            y = TOP_MARGIN;
-          } else {
-            y += LINE_HEIGHT * 1.5;
-          }
-
-          doc.setFont('courier', 'bold');
-          lines.forEach((line) => {
-            doc.text(line, LEFT_MARGIN, y);
-            y += LINE_HEIGHT;
-          });
-          doc.setFont('courier', 'normal');
-          break;
+      if (
+        block.type === 'scene_heading' ||
+        block.type === 'heading_1' ||
+        block.type === 'segment_header' ||
+        block.type === 'music_section' ||
+        block.type === 'section_divider'
+      ) {
+        const prefix =
+          block.type === 'section_divider'
+            ? `=== SECCIÓN: ${text.toUpperCase()} ===`
+            : blockDef.isUppercase
+            ? text.toUpperCase()
+            : text;
+        lines = doc.splitTextToSize(prefix, RIGHT_MARGIN - LEFT_MARGIN);
+        const estimatedHeight = lines.length * LINE_HEIGHT + LINE_HEIGHT * 2;
+        if (y + estimatedHeight > BOTTOM_MARGIN) {
+          doc.addPage();
+          pageNumber++;
+          printPageHeader(pageNumber);
+          y = TOP_MARGIN;
+        } else {
+          y += LINE_HEIGHT * 1.5;
         }
 
-        case 'action': {
-          lines = doc.splitTextToSize(text, RIGHT_MARGIN - LEFT_MARGIN);
-          estimatedHeight = lines.length * LINE_HEIGHT + LINE_HEIGHT;
-          if (y + estimatedHeight > BOTTOM_MARGIN) {
-            doc.addPage();
-            pageNumber++;
-            printPageHeader(pageNumber);
-            y = TOP_MARGIN;
-          } else {
-            y += LINE_HEIGHT;
-          }
-
-          lines.forEach((line) => {
-            doc.text(line, LEFT_MARGIN, y);
-            y += LINE_HEIGHT;
-          });
-          break;
-        }
-
-        case 'character': {
-          // Prevent orphan character (check if at least 2 dialogue lines fit)
-          const nextBlock = blocks[i + 1];
-          const hasDialogueNext = nextBlock && nextBlock.type === 'dialogue';
-          const neededSpace = hasDialogueNext ? LINE_HEIGHT * 4 : LINE_HEIGHT * 2;
-
-          if (y + neededSpace > BOTTOM_MARGIN) {
-            doc.addPage();
-            pageNumber++;
-            printPageHeader(pageNumber);
-            y = TOP_MARGIN;
-          } else {
-            y += LINE_HEIGHT * 1.2;
-          }
-
-          doc.setFont('courier', 'bold');
-          // Centered at ~3.7 inches from left
-          doc.text(text.toUpperCase(), 270, y);
-          doc.setFont('courier', 'normal');
+        doc.setFont('courier', 'bold');
+        lines.forEach((line) => {
+          doc.text(line, LEFT_MARGIN, y);
           y += LINE_HEIGHT;
-          break;
+        });
+        doc.setFont('courier', 'normal');
+      } else if (
+        block.type === 'character' ||
+        block.type === 'interview_subject' ||
+        block.type === 'voice_cue'
+      ) {
+        const neededSpace = LINE_HEIGHT * 4;
+        if (y + neededSpace > BOTTOM_MARGIN) {
+          doc.addPage();
+          pageNumber++;
+          printPageHeader(pageNumber);
+          y = TOP_MARGIN;
+        } else {
+          y += LINE_HEIGHT * 1.2;
         }
 
-        case 'parenthetical': {
-          const parentheticalText = text.startsWith('(') && text.endsWith(')') ? text : `(${text})`;
-          lines = doc.splitTextToSize(parentheticalText, 200);
-          if (y + lines.length * LINE_HEIGHT > BOTTOM_MARGIN) {
-            doc.addPage();
-            pageNumber++;
-            printPageHeader(pageNumber);
-            y = TOP_MARGIN;
-          }
-
-          lines.forEach((line) => {
-            doc.text(line, 220, y);
-            y += LINE_HEIGHT;
-          });
-          break;
+        doc.setFont('courier', 'bold');
+        doc.text(text.toUpperCase(), 270, y);
+        doc.setFont('courier', 'normal');
+        y += LINE_HEIGHT;
+      } else if (
+        block.type === 'parenthetical' ||
+        block.type === 'pause_mark' ||
+        block.type === 'silence_mark'
+      ) {
+        const formatted =
+          block.type === 'parenthetical' && !text.startsWith('(')
+            ? `(${text})`
+            : text;
+        lines = doc.splitTextToSize(formatted, 200);
+        if (y + lines.length * LINE_HEIGHT > BOTTOM_MARGIN) {
+          doc.addPage();
+          pageNumber++;
+          printPageHeader(pageNumber);
+          y = TOP_MARGIN;
         }
 
-        case 'dialogue': {
-          // Dialogue width ~3.5 inches (250pt), indented at 180pt
-          lines = doc.splitTextToSize(text, 250);
-          if (y + lines.length * LINE_HEIGHT > BOTTOM_MARGIN) {
-            doc.addPage();
-            pageNumber++;
-            printPageHeader(pageNumber);
-            y = TOP_MARGIN;
-          }
-
-          lines.forEach((line) => {
-            doc.text(line, 180, y);
-            y += LINE_HEIGHT;
-          });
-          break;
-        }
-
-        case 'transition': {
-          if (y + LINE_HEIGHT * 2 > BOTTOM_MARGIN) {
-            doc.addPage();
-            pageNumber++;
-            printPageHeader(pageNumber);
-            y = TOP_MARGIN;
-          } else {
-            y += LINE_HEIGHT;
-          }
-
-          doc.setFont('courier', 'bold');
-          doc.text(text.toUpperCase(), RIGHT_MARGIN, y, { align: 'right' });
-          doc.setFont('courier', 'normal');
+        lines.forEach((line) => {
+          doc.text(line, 220, y);
           y += LINE_HEIGHT;
-          break;
+        });
+      } else if (
+        block.type === 'dialogue' ||
+        block.type === 'voice_over' ||
+        block.type === 'off_screen' ||
+        block.type === 'testimony'
+      ) {
+        lines = doc.splitTextToSize(text, 250);
+        if (y + lines.length * LINE_HEIGHT > BOTTOM_MARGIN) {
+          doc.addPage();
+          pageNumber++;
+          printPageHeader(pageNumber);
+          y = TOP_MARGIN;
         }
 
-        default: {
-          lines = doc.splitTextToSize(text, RIGHT_MARGIN - LEFT_MARGIN);
-          lines.forEach((line) => {
-            doc.text(line, LEFT_MARGIN, y);
-            y += LINE_HEIGHT;
-          });
-          break;
+        lines.forEach((line) => {
+          doc.text(line, 180, y);
+          y += LINE_HEIGHT;
+        });
+      } else if (block.type === 'transition') {
+        if (y + LINE_HEIGHT * 2 > BOTTOM_MARGIN) {
+          doc.addPage();
+          pageNumber++;
+          printPageHeader(pageNumber);
+          y = TOP_MARGIN;
+        } else {
+          y += LINE_HEIGHT;
         }
+
+        doc.setFont('courier', 'bold');
+        doc.text(text.toUpperCase(), RIGHT_MARGIN, y, { align: 'right' });
+        doc.setFont('courier', 'normal');
+        y += LINE_HEIGHT;
+      } else {
+        lines = doc.splitTextToSize(text, RIGHT_MARGIN - LEFT_MARGIN);
+        const estimatedHeight = lines.length * LINE_HEIGHT + LINE_HEIGHT;
+        if (y + estimatedHeight > BOTTOM_MARGIN) {
+          doc.addPage();
+          pageNumber++;
+          printPageHeader(pageNumber);
+          y = TOP_MARGIN;
+        } else {
+          y += LINE_HEIGHT * 0.8;
+        }
+
+        lines.forEach((line) => {
+          doc.text(line, LEFT_MARGIN, y);
+          y += LINE_HEIGHT;
+        });
       }
     }
 
@@ -212,9 +227,6 @@ export const Exporters = {
     doc.save(`${safeTitle}.pdf`);
   },
 
-  /**
-   * Generates a clean .fountain standard string
-   */
   exportToFountain(blocks: ScriptBlock[], title?: string, author?: string): string {
     const lines: string[] = [];
 
@@ -228,23 +240,46 @@ export const Exporters = {
     }
 
     blocks.forEach((block) => {
-      const text = block.text.trim();
+      if (block.type === 'av_row') {
+        const vis = (block.visualText || block.text || '').trim();
+        const aud = (block.audioText || '').trim();
+        if (vis || aud) {
+          lines.push(`\n[VIDEO]: ${vis}`);
+          lines.push(`[AUDIO]: ${aud}\n`);
+        }
+        return;
+      }
+
+      const text = (block.text || '').trim();
       if (!text) return;
 
       switch (block.type) {
+        case 'section_divider':
+          lines.push(`\n# ${text} [${block.sectionStructure || 'hibrida'}]\n`);
+          break;
         case 'scene_heading':
+        case 'segment_header':
+        case 'music_section':
           lines.push(`\n${text.toUpperCase()}\n`);
           break;
-        case 'action':
-          lines.push(`\n${text}\n`);
+        case 'heading_1':
+          lines.push(`\n# ${text}\n`);
+          break;
+        case 'heading_2':
+          lines.push(`\n## ${text}\n`);
           break;
         case 'character':
+        case 'interview_subject':
+        case 'voice_cue':
           lines.push(`\n${text.toUpperCase()}`);
           break;
         case 'parenthetical':
           lines.push(text.startsWith('(') ? text : `(${text})`);
           break;
         case 'dialogue':
+        case 'voice_over':
+        case 'off_screen':
+        case 'testimony':
           lines.push(text);
           break;
         case 'transition':
@@ -259,45 +294,49 @@ export const Exporters = {
     return lines.join('\n');
   },
 
-  /**
-   * Parses a Fountain formatted text file into ScriptBlock objects
-   */
   importFromFountain(fountainText: string): ScriptBlock[] {
     const rawLines = fountainText.split('\n');
     const blocks: ScriptBlock[] = [];
     let previousType: BlockType | undefined = undefined;
-
     let inHeader = true;
 
     for (let i = 0; i < rawLines.length; i++) {
       const line = rawLines[i].trim();
 
-      // Skip Fountain title page keys if at start
       if (inHeader) {
         if (line === '===' || line.startsWith('===') || line === '') {
           if (line.startsWith('===')) inHeader = false;
           continue;
         }
-        if (line.includes(':') && (line.toLowerCase().startsWith('title:') || line.toLowerCase().startsWith('author:') || line.toLowerCase().startsWith('credit:'))) {
+        if (
+          line.includes(':') &&
+          (line.toLowerCase().startsWith('title:') ||
+            line.toLowerCase().startsWith('author:') ||
+            line.toLowerCase().startsWith('draft date:') ||
+            line.toLowerCase().startsWith('credit:'))
+        ) {
           continue;
         }
         inHeader = false;
       }
 
-      if (!line) {
-        // blank line
-        continue;
-      }
+      if (!line) continue;
 
       let type: BlockType = 'action';
-
-      if (line.startsWith('>')) {
+      if (line.startsWith('## ')) {
+        type = 'heading_2';
+      } else if (line.startsWith('# ')) {
+        type = 'heading_1';
+      } else if (line.startsWith('>')) {
         type = 'transition';
       } else {
         type = ScreenplayEngine.classifyBlock(line, previousType);
       }
 
-      const cleanText = line.startsWith('>') ? line.replace(/^>\s*/, '') : line;
+      const cleanText = line
+        .replace(/^##\s+/, '')
+        .replace(/^#\s+/, '')
+        .replace(/^>\s*/, '');
 
       blocks.push({
         id: `blk-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
@@ -313,20 +352,12 @@ export const Exporters = {
       : [
           {
             id: `blk-${Date.now()}`,
-            type: 'scene_heading',
-            text: 'INT. NUEVA ESCENA - DÍA',
-          },
-          {
-            id: `blk-${Date.now()}-2`,
-            type: 'action',
-            text: 'Comienza a escribir aquí.',
+            type: 'paragraph',
+            text: '',
           },
         ];
   },
 
-  /**
-   * Generates a cleanly formatted text file with standard tab spacing
-   */
   exportToPlainText(blocks: ScriptBlock[], title?: string): string {
     const lines: string[] = [];
     if (title) {
@@ -336,27 +367,43 @@ export const Exporters = {
     }
 
     blocks.forEach((b) => {
-      const text = b.text.trim();
+      if (b.type === 'av_row') {
+        lines.push(`\n[VIDEO]: ${b.visualText || b.text || ''}`);
+        lines.push(`[AUDIO]: ${b.audioText || ''}\n`);
+        return;
+      }
+
+      const text = (b.text || '').trim();
       if (!text) return;
 
       switch (b.type) {
         case 'scene_heading':
+        case 'heading_1':
+        case 'segment_header':
+        case 'music_section':
+        case 'section_divider':
           lines.push(`\n${text.toUpperCase()}\n`);
           break;
-        case 'action':
-          lines.push(`\n${text}\n`);
-          break;
         case 'character':
+        case 'interview_subject':
+        case 'voice_cue':
           lines.push(`\n                      ${text.toUpperCase()}`);
           break;
         case 'parenthetical':
-          lines.push(`                 ${text.startsWith('(') ? text : `(${text})`}`);
+          lines.push(
+            `                 ${text.startsWith('(') ? text : `(${text})`}`
+          );
           break;
         case 'dialogue':
+        case 'voice_over':
+        case 'off_screen':
+        case 'testimony':
           lines.push(`            ${text}`);
           break;
         case 'transition':
-          lines.push(`\n                                              ${text.toUpperCase()}\n`);
+          lines.push(
+            `\n                                              ${text.toUpperCase()}\n`
+          );
           break;
         default:
           lines.push(`\n${text}\n`);
@@ -367,9 +414,6 @@ export const Exporters = {
     return lines.join('\n');
   },
 
-  /**
-   * Helper to trigger file downloads in browser
-   */
   downloadBlob(content: string, filename: string, mimeType: string) {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);

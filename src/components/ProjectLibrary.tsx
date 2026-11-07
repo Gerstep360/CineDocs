@@ -20,10 +20,23 @@ import {
   ArrowRight,
   Upload,
   FilePlus2,
-  ExternalLink,
+  FolderTree,
 } from 'lucide-react';
-import { Project, ProjectCategory, TemplateType } from '../types/script';
-import { getTargetDrivePath } from '../lib/googleDrive';
+import {
+  Project,
+  ProjectCategory,
+  ScriptStructureType,
+  NarrativeMethodologyId,
+} from '../types/script';
+import {
+  STRUCTURES_CATALOG,
+  NARRATIVE_METHODOLOGIES,
+  ScreenplayEngine,
+} from '../lib/screenplay-engine';
+import {
+  getTargetDrivePath,
+  getTargetLocalDirectoryPath,
+} from '../lib/googleDrive';
 
 interface ProjectLibraryProps {
   projects: Project[];
@@ -55,17 +68,22 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<'all' | 'favorites' | 'archived' | 'trash'>('all');
+  const [selectedStatus, setSelectedStatus] = useState<
+    'all' | 'favorites' | 'archived' | 'trash'
+  >('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
-  // New Project Modal State
+  // Decoupled Creation State: Production Type + Any of 11 Structures + Optional Methodology
   const [newTitle, setNewTitle] = useState('');
   const [newCategory, setNewCategory] = useState<ProjectCategory>('movie');
-  const [newSubCategory, setNewSubCategory] = useState('Película o Cortometraje');
+  const [newSubCategory, setNewSubCategory] = useState('Película');
   const [newAuthor, setNewAuthor] = useState('');
-  const [newTemplate, setNewTemplate] = useState<TemplateType>('screenplay');
+  const [newStructure, setNewStructure] =
+    useState<ScriptStructureType>('cinematografica');
+  const [newMethodology, setNewMethodology] =
+    useState<NarrativeMethodologyId>('none');
 
   const modalVisible = isWizardOpen || !!isWizardOpenExternal;
 
@@ -77,12 +95,14 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const openModalWithPreset = (
     cat: ProjectCategory,
     sub: string,
-    tmpl: TemplateType = 'screenplay'
+    structure: ScriptStructureType = 'cinematografica',
+    methodology: NarrativeMethodologyId = 'none'
   ) => {
     setNewTitle('');
     setNewCategory(cat);
     setNewSubCategory(sub);
-    setNewTemplate(tmpl);
+    setNewStructure(structure);
+    setNewMethodology(methodology);
     setIsWizardOpen(true);
   };
 
@@ -122,8 +142,9 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       category: newCategory,
       subCategory: newSubCategory,
       author: newAuthor.trim() || 'Autor',
-      templateType: newTemplate,
-      presetType: 'empty',
+      templateType: newStructure,
+      defaultStructure: newStructure,
+      methodologyId: newMethodology,
     } as any);
 
     closeModal();
@@ -151,7 +172,7 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       case 'series':
         return 'Serie';
       case 'video':
-        return 'Video';
+        return 'Video Independiente';
       case 'episodic':
         return 'Episódico';
       default:
@@ -161,13 +182,15 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
   return (
     <div className="min-h-full bg-slate-100 dark:bg-neutral-950 transition-colors duration-200">
-      {/* Google Docs Style Top "Start a new document" Ribbon */}
+      {/* Top Quick Starter Strip */}
       <section className="bg-slate-200/60 dark:bg-neutral-900/70 border-b border-slate-200 dark:border-neutral-800 py-6 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xs font-semibold text-slate-700 dark:text-neutral-300">
-              Iniciar un nuevo guion
-            </h2>
+            <div>
+              <h2 className="text-xs font-semibold text-slate-700 dark:text-neutral-300">
+                Iniciar un nuevo guion (Cualquier producción puede usar cualquier estructura)
+              </h2>
+            </div>
             <label className="flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
               <Upload className="w-3.5 h-3.5" />
               <span>Importar respaldo (.json)</span>
@@ -190,50 +213,65 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             </label>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3.5">
             {[
               {
-                id: 'blank-movie',
-                title: 'Guion en blanco',
-                subtitle: 'Cine o Cortometraje',
+                id: 'cinematic',
+                title: 'Cinematográfica',
+                subtitle: 'Cine, cortos y ficción',
                 category: 'movie' as ProjectCategory,
-                template: 'screenplay' as TemplateType,
-                icon: Plus,
+                structure: 'cinematografica' as ScriptStructureType,
+                methodology: 'cine_tres_actos' as NarrativeMethodologyId,
+                icon: Film,
                 accent: 'text-blue-600 dark:text-blue-400',
               },
               {
-                id: 'series-ep',
-                title: 'Serie por capítulos',
-                subtitle: 'Temporadas y episodios',
-                category: 'series' as ProjectCategory,
-                template: 'screenplay' as TemplateType,
-                icon: Tv,
+                id: 'hybrid',
+                title: 'Híbrida Multiformato',
+                subtitle: 'Combina estilos por sección',
+                category: 'video' as ProjectCategory,
+                structure: 'hibrida' as ScriptStructureType,
+                methodology: 'video_gancho_desarrollo' as NarrativeMethodologyId,
+                icon: Sparkles,
+                accent: 'text-purple-600 dark:text-purple-400',
+              },
+              {
+                id: 'flexible',
+                title: 'Estándar Flexible',
+                subtitle: 'Libre sin INT./EXT.',
+                category: 'video' as ProjectCategory,
+                structure: 'estandar_flexible' as ScriptStructureType,
+                methodology: 'none' as NarrativeMethodologyId,
+                icon: Plus,
                 accent: 'text-emerald-600 dark:text-emerald-400',
               },
               {
-                id: 'youtube-2col',
-                title: 'Video de YouTube',
-                subtitle: '2 Columnas (Video y Audio)',
+                id: 'voiceover',
+                title: 'Voz en Off / Ensayo',
+                subtitle: 'Narración continua y pausas',
                 category: 'video' as ProjectCategory,
-                template: 'two_column' as TemplateType,
+                structure: 'voz_en_off' as ScriptStructureType,
+                methodology: 'video_gancho_desarrollo' as NarrativeMethodologyId,
                 icon: Video,
                 accent: 'text-amber-600 dark:text-amber-400',
               },
               {
-                id: 'video-narrativo',
-                title: 'Sketch / Reel / Corto',
-                subtitle: 'Guion corrido directo',
-                category: 'video' as ProjectCategory,
-                template: 'screenplay' as TemplateType,
-                icon: Film,
+                id: 'sketch',
+                title: 'Sketch y Comedia',
+                subtitle: 'Situación, giro y remate',
+                category: 'episodic' as ProjectCategory,
+                structure: 'sketch_comedia' as ScriptStructureType,
+                methodology: 'sketch_escalada_remate' as NarrativeMethodologyId,
+                icon: Tv,
                 accent: 'text-rose-600 dark:text-rose-400',
               },
               {
-                id: 'episodic-show',
-                title: 'Programa o Podcast',
-                subtitle: 'Entregas recurrentes',
-                category: 'episodic' as ProjectCategory,
-                template: 'screenplay' as TemplateType,
+                id: 'docu',
+                title: 'Documental / Técnico',
+                subtitle: 'Entrevistas o 2 Columnas',
+                category: 'movie' as ProjectCategory,
+                structure: 'documental_entrevista' as ScriptStructureType,
+                methodology: 'documental_investigacion' as NarrativeMethodologyId,
                 icon: Layers,
                 accent: 'text-indigo-600 dark:text-indigo-400',
               },
@@ -242,25 +280,29 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 key={card.id}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04, duration: 0.2 }}
+                transition={{ delay: i * 0.03, duration: 0.2 }}
                 whileHover={{ y: -3 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => openModalWithPreset(card.category, card.subtitle, card.template)}
+                onClick={() =>
+                  openModalWithPreset(
+                    card.category,
+                    card.title,
+                    card.structure,
+                    card.methodology
+                  )
+                }
                 className="group flex flex-col text-left focus:outline-none"
               >
-                {/* Miniature Document Sheet */}
-                <div className="w-full h-32 rounded-lg bg-white dark:bg-neutral-900 border border-slate-300/80 dark:border-neutral-800 group-hover:border-blue-500 dark:group-hover:border-blue-500 shadow-xs group-hover:shadow-md transition-all p-3.5 flex flex-col justify-between relative overflow-hidden">
+                <div className="w-full h-28 rounded-lg bg-white dark:bg-neutral-900 border border-slate-300/80 dark:border-neutral-800 group-hover:border-blue-500 dark:group-hover:border-blue-500 shadow-xs group-hover:shadow-md transition-all p-3 flex flex-col justify-between relative overflow-hidden">
                   <div className="space-y-1.5 opacity-35 group-hover:opacity-60 transition-opacity">
                     <div className="w-1/2 h-1.5 bg-slate-400 dark:bg-neutral-600 rounded-full" />
                     <div className="w-full h-1 bg-slate-300 dark:bg-neutral-700 rounded-full" />
                     <div className="w-4/5 h-1 bg-slate-300 dark:bg-neutral-700 rounded-full" />
-                    <div className="w-1/3 h-1.5 bg-slate-400 dark:bg-neutral-600 rounded-full mx-auto mt-2" />
-                    <div className="w-2/3 h-1 bg-slate-300 dark:bg-neutral-700 rounded-full mx-auto" />
                   </div>
                   <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-neutral-800/80">
-                    <card.icon className={`w-5 h-5 ${card.accent}`} />
+                    <card.icon className={`w-4 h-4 ${card.accent}`} />
                     <span className="text-[10px] font-mono text-slate-400 dark:text-neutral-500">
-                      + Crear
+                      + Elegir
                     </span>
                   </div>
                 </div>
@@ -278,16 +320,15 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
       {/* Main Documents List Area */}
       <div className="max-w-6xl mx-auto px-6 py-8">
-        {/* Filter and Search Bar */}
         <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 pb-5 border-b border-slate-200 dark:border-neutral-800">
-          {/* Category Segmented Control */}
           <div className="flex items-center gap-1 p-1 bg-slate-200/70 dark:bg-neutral-900 rounded-lg overflow-x-auto">
             {[
-              { id: 'all', label: 'Todos mis documentos' },
+              { id: 'all', label: 'Todos' },
               { id: 'movie', label: 'Películas' },
               { id: 'series', label: 'Series' },
-              { id: 'video', label: 'Videos' },
+              { id: 'video', label: 'Videos Independientes' },
               { id: 'episodic', label: 'Episódico' },
+              { id: 'custom', label: 'Personalizados' },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -303,7 +344,6 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             ))}
           </div>
 
-          {/* Search & View Controls */}
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1 text-xs">
               <button
@@ -389,7 +429,7 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           </div>
         </div>
 
-        {/* Empty State (Zero Sample Data by Default) */}
+        {/* Empty State */}
         {filteredProjects.length === 0 ? (
           <motion.div
             initial={{ opacity: 0, scale: 0.98 }}
@@ -406,18 +446,20 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             </h3>
             <p className="text-xs text-slate-500 dark:text-neutral-400 mt-1 max-w-md mx-auto leading-relaxed">
               {selectedStatus === 'trash'
-                ? 'Los documentos que envíes a la papelera aparecerán aquí por si necesitas restaurarlos.'
-                : 'Tu espacio está completamente limpio y sin datos de prueba. Haz clic en cualquiera de las hojas de arriba o en el botón de abajo para empezar a escribir como en Google Docs o Word.'}
+                ? 'Los documentos que envíes a la papelera aparecerán aquí.'
+                : 'Elige cualquier tipo de producción y combínalo con cualquiera de las 11 estructuras de escritura (Cinematográfica, Estándar flexible, Híbrida, Voz en off, Sketch, Documental, Tutorial, Escaleta, Podcast, Videoclip o 2 Columnas).'}
             </p>
             {selectedStatus !== 'trash' && (
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => openModalWithPreset('movie', 'Película o Cortometraje', 'screenplay')}
+                onClick={() =>
+                  openModalWithPreset('movie', 'Película', 'cinematografica')
+                }
                 className="mt-5 inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors shadow-xs"
               >
                 <Plus className="w-4 h-4" />
-                Crear mi primer guion en blanco
+                Crear Nuevo Guion
               </motion.button>
             )}
           </motion.div>
@@ -425,12 +467,16 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             <AnimatePresence mode="popLayout">
               {filteredProjects.map((project, idx) => {
-                const sceneCount =
-                  project.documents[0]?.blocks.filter((b) => b.type === 'scene_heading').length ||
-                  project.seasons?.[0]?.episodes?.[0]?.blocks.filter((b) => b.type === 'scene_heading').length ||
-                  0;
-
-                const targetDriveFolder = getTargetDrivePath(project.category);
+                const firstDoc =
+                  project.documents?.[0] || project.seasons?.[0]?.episodes?.[0];
+                const structDef = ScreenplayEngine.getStructureDefinition(
+                  firstDoc?.templateType || project.defaultStructure
+                );
+                const driveDir = getTargetDrivePath(project.category, project.title);
+                const localDir = getTargetLocalDirectoryPath(
+                  project.category,
+                  project.title
+                );
 
                 return (
                   <motion.div
@@ -450,8 +496,8 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                             {getCategoryLabel(project.category)}
                           </span>
                           <span aria-hidden="true">·</span>
-                          <span className="truncate font-mono text-[11px]">
-                            {targetDriveFolder}
+                          <span className="truncate text-blue-600 dark:text-blue-400 font-medium">
+                            {structDef.shortName}
                           </span>
                         </div>
 
@@ -466,13 +512,21 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                                   : 'text-slate-400 hover:text-slate-600 dark:hover:text-neutral-200'
                               }`}
                             >
-                              <Star className={`w-3.5 h-3.5 ${project.isFavorite ? 'fill-current' : ''}`} />
+                              <Star
+                                className={`w-3.5 h-3.5 ${
+                                  project.isFavorite ? 'fill-current' : ''
+                                }`}
+                              />
                             </button>
                           )}
 
                           <div className="relative">
                             <button
-                              onClick={() => setMenuOpenId(menuOpenId === project.id ? null : project.id)}
+                              onClick={() =>
+                                setMenuOpenId(
+                                  menuOpenId === project.id ? null : project.id
+                                )
+                              }
                               aria-label="Opciones"
                               className="p-1.5 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-neutral-200 hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors"
                             >
@@ -551,32 +605,30 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                         >
                           {project.title}
                         </h3>
-                        <p className="mt-1 text-xs text-slate-500 dark:text-neutral-400 line-clamp-2">
-                          {project.logline || `Autor: ${project.author || 'Sin especificar'}`}
-                        </p>
+                        <div className="mt-2 space-y-1 text-[11px] font-mono text-slate-500 dark:text-neutral-400">
+                          <div className="truncate" title={localDir}>
+                            Local: {localDir}
+                          </div>
+                          <div className="truncate" title={driveDir}>
+                            Drive: {driveDir}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="mt-5 pt-3 border-t border-slate-100 dark:border-neutral-800/80 flex items-center justify-between text-xs text-slate-500 dark:text-neutral-400">
-                      <div className="flex items-center gap-2 font-mono tabular-nums">
-                        <BookOpen className="w-3.5 h-3.5 text-slate-400" />
-                        <span>
-                          {sceneCount} {sceneCount === 1 ? 'escena' : 'escenas'}
-                        </span>
-                        <span aria-hidden="true">·</span>
-                        <span>
-                          {new Date(project.updatedAt).toLocaleDateString('es-ES', {
-                            day: '2-digit',
-                            month: 'short',
-                          })}
-                        </span>
-                      </div>
+                    <div className="mt-4 pt-3 border-t border-slate-100 dark:border-neutral-800/80 flex items-center justify-between text-xs text-slate-500 dark:text-neutral-400">
+                      <span className="font-mono tabular-nums">
+                        {new Date(project.updatedAt).toLocaleDateString('es-ES', {
+                          day: '2-digit',
+                          month: 'short',
+                        })}
+                      </span>
 
                       <button
                         onClick={() => onSelectProject(project.id)}
                         className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-500 transition-colors"
                       >
-                        Abrir
+                        Abrir Guion
                         <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                       </button>
                     </div>
@@ -591,64 +643,66 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 dark:bg-neutral-800/50 border-b border-slate-200 dark:border-neutral-800 text-slate-500 dark:text-neutral-400">
                 <tr>
-                  <th className="py-3 px-4 font-medium">Nombre del Documento</th>
-                  <th className="py-3 px-4 font-medium">Tipo / Carpeta Drive</th>
-                  <th className="py-3 px-4 font-medium">Última edición</th>
+                  <th className="py-3 px-4 font-medium">Nombre del Guion</th>
+                  <th className="py-3 px-4 font-medium">Estructura</th>
+                  <th className="py-3 px-4 font-medium">Directorio Propio (Local / Drive)</th>
                   <th className="py-3 px-4 font-medium text-right">Acción</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-neutral-800/60">
-                {filteredProjects.map((project) => (
-                  <tr
-                    key={project.id}
-                    className="hover:bg-slate-50 dark:hover:bg-neutral-800/40 transition-colors"
-                  >
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        {getCategoryIcon(project.category)}
-                        <span
+                {filteredProjects.map((project) => {
+                  const firstDoc =
+                    project.documents?.[0] || project.seasons?.[0]?.episodes?.[0];
+                  const structDef = ScreenplayEngine.getStructureDefinition(
+                    firstDoc?.templateType || project.defaultStructure
+                  );
+                  return (
+                    <tr
+                      key={project.id}
+                      className="hover:bg-slate-50 dark:hover:bg-neutral-800/40 transition-colors"
+                    >
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          {getCategoryIcon(project.category)}
+                          <span
+                            onClick={() => onSelectProject(project.id)}
+                            className="font-semibold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                          >
+                            {project.title}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-blue-600 dark:text-blue-400 font-medium">
+                        {structDef.shortName}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[11px] text-slate-500 dark:text-neutral-400">
+                        {getTargetLocalDirectoryPath(project.category, project.title)}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
                           onClick={() => onSelectProject(project.id)}
-                          className="font-semibold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                          className="px-3 py-1 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-md transition-colors"
                         >
-                          {project.title}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 font-mono text-slate-500 dark:text-neutral-400">
-                      {getTargetDrivePath(project.category)}
-                    </td>
-                    <td className="py-3 px-4 font-mono tabular-nums text-slate-500 dark:text-neutral-400">
-                      {new Date(project.updatedAt).toLocaleDateString('es-ES', {
-                        day: '2-digit',
-                        month: 'short',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <button
-                        onClick={() => onSelectProject(project.id)}
-                        className="px-3 py-1 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-md transition-colors"
-                      >
-                        Abrir hoja
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                          Abrir
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
 
-      {/* Simple & Friendly 1-Step Creation Modal */}
+      {/* Decoupled Creation Modal: 1. Production Type, 2. Any of 11 Structures, 3. Optional Narrative Methodology */}
       <AnimatePresence>
         {modalVisible && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 dark:bg-black/60 backdrop-blur-xs"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 dark:bg-black/60 backdrop-blur-xs overflow-y-auto"
           >
             <motion.form
               initial={{ scale: 0.95, opacity: 0, y: 10 }}
@@ -656,15 +710,15 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
               transition={{ duration: 0.18 }}
               onSubmit={handleCreateSubmit}
-              className="w-full max-w-md bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl shadow-2xl overflow-hidden"
+              className="w-full max-w-2xl bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-2xl shadow-2xl overflow-hidden my-8"
             >
               <div className="px-6 py-4 border-b border-slate-200 dark:border-neutral-800 flex items-center justify-between">
                 <div>
                   <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    Nuevo Guion
+                    Nuevo Guion — Tipo de Producción y Estructura Independientes
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-neutral-400">
-                    Ponle un nombre y empieza a escribir de inmediato.
+                    Elige libremente qué vas a producir y qué estructura de escritura prefieres usar.
                   </p>
                 </div>
                 <button
@@ -676,31 +730,48 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 </button>
               </div>
 
-              <div className="p-6 space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-neutral-300 mb-1.5">
-                    Nombre de tu proyecto o historia
-                  </label>
-                  <input
-                    type="text"
-                    autoFocus
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder="Ej: Mi primer cortometraje, Episodio Piloto, Video..."
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 rounded-lg text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                  />
+              <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+                {/* Title & Author */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-neutral-300 mb-1">
+                      1. Nombre del proyecto o guion
+                    </label>
+                    <input
+                      type="text"
+                      autoFocus
+                      value={newTitle}
+                      onChange={(e) => setNewTitle(e.target.value)}
+                      placeholder="Ej: El Relojero, Mi Serie Web, Documental..."
+                      className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 rounded-lg text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-neutral-300 mb-1">
+                      Autor (opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={newAuthor}
+                      onChange={(e) => setNewAuthor(e.target.value)}
+                      placeholder="Tu nombre..."
+                      className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 rounded-lg text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
                 </div>
 
+                {/* Production Category (Defines Folder Organization, NOT Structure Restriction) */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-neutral-300 mb-1.5">
-                    ¿Para qué es este guion? (Define su carpeta en Drive)
+                    2. Tipo de Producción (Organización en carpetas, sin limitar tu estructura)
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                     {[
-                      { id: 'movie', label: 'Película o Corto', template: 'screenplay', icon: Film },
-                      { id: 'series', label: 'Serie por capítulos', template: 'screenplay', icon: Tv },
-                      { id: 'video', label: 'Video / YouTube', template: 'two_column', icon: Video },
-                      { id: 'episodic', label: 'Podcast / Programa', template: 'screenplay', icon: Layers },
+                      { id: 'movie', label: 'Película / Corto', icon: Film },
+                      { id: 'series', label: 'Serie (Temp/Cap)', icon: Tv },
+                      { id: 'video', label: 'Video Independiente', icon: Video },
+                      { id: 'episodic', label: 'Episódico', icon: Layers },
+                      { id: 'custom', label: 'Personalizado', icon: Sparkles },
                     ].map((opt) => (
                       <button
                         key={opt.id}
@@ -709,50 +780,104 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                           setNewCategory(opt.id as ProjectCategory);
                           setNewSubCategory(opt.label);
                         }}
-                        className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-medium text-left transition-all ${
+                        className={`flex flex-col items-start gap-1 p-2.5 rounded-lg border text-xs font-medium text-left transition-all ${
                           newCategory === opt.id
                             ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
                             : 'border-slate-200 dark:border-neutral-800 text-slate-600 dark:text-neutral-400 hover:border-slate-300'
                         }`}
                       >
                         <opt.icon className="w-4 h-4 shrink-0" />
-                        <span className="truncate">{opt.label}</span>
+                        <span className="truncate w-full">{opt.label}</span>
                       </button>
                     ))}
                   </div>
-                  <p className="mt-1.5 text-[11px] font-mono text-slate-500 dark:text-neutral-400">
-                    Carpeta en Google Drive: <strong>{getTargetDrivePath(newCategory)}</strong>
-                  </p>
+
+                  {/* Preview of Dedicated Project Directories */}
+                  <div className="mt-2 p-2.5 rounded-lg bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 text-[11px] font-mono text-slate-600 dark:text-neutral-400 space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <FolderTree className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                      <span>
+                        <strong>Directorio Local:</strong>{' '}
+                        {getTargetLocalDirectoryPath(
+                          newCategory,
+                          newTitle.trim() || 'Nombre del Guion',
+                          newCategory === 'series' ? 'Temporada 1' : undefined,
+                          newCategory === 'series'
+                            ? 'Capitulo 1'
+                            : newTitle.trim() || 'Archivo'
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <FolderTree className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span>
+                        <strong>Directorio Drive:</strong>{' '}
+                        {getTargetDrivePath(
+                          newCategory,
+                          newTitle.trim() || 'Nombre del Guion',
+                          newCategory === 'series' ? 'Temporada 1' : undefined
+                        )}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
+                {/* All 11 Structures (A - K) */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-neutral-300 mb-1.5">
-                    Estilo de página
+                    3. Estructura de Escritura (Puedes cambiarla o combinarla dentro del editor)
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setNewTemplate('screenplay')}
-                      className={`p-2 text-xs rounded-lg border font-medium ${
-                        newTemplate === 'screenplay'
-                          ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
-                          : 'border-slate-200 dark:border-neutral-800 text-slate-600 dark:text-neutral-400'
-                      }`}
-                    >
-                      Hoja de Guion (Cine/TV)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setNewTemplate('two_column')}
-                      className={`p-2 text-xs rounded-lg border font-medium ${
-                        newTemplate === 'two_column'
-                          ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
-                          : 'border-slate-200 dark:border-neutral-800 text-slate-600 dark:text-neutral-400'
-                      }`}
-                    >
-                      2 Columnas (Video y Audio)
-                    </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                    {STRUCTURES_CATALOG.map((struct) => {
+                      const isSelected = newStructure === struct.id;
+                      return (
+                        <button
+                          key={struct.id}
+                          type="button"
+                          onClick={() => setNewStructure(struct.id)}
+                          className={`p-3 rounded-xl border text-left transition-all ${
+                            isSelected
+                              ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/40'
+                              : 'border-slate-200 dark:border-neutral-800 hover:border-slate-300 dark:hover:border-neutral-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-900 dark:text-white">
+                              {struct.name}
+                            </span>
+                            {struct.isHybrid && (
+                              <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400">
+                                Multiformato
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-[11px] text-slate-500 dark:text-neutral-400 leading-snug">
+                            {struct.description}
+                          </p>
+                        </button>
+                      );
+                    })}
                   </div>
+                </div>
+
+                {/* Optional Narrative Methodology */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-neutral-300 mb-1">
+                    4. Metodología Narrativa Opcional (Guía de apoyo, no impone bloques)
+                  </label>
+                  <select
+                    value={newMethodology}
+                    onChange={(e) =>
+                      setNewMethodology(e.target.value as NarrativeMethodologyId)
+                    }
+                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
+                  >
+                    {NARRATIVE_METHODOLOGIES.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.categoryLabel}: {m.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -768,7 +893,7 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   type="submit"
                   className="px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-xs transition-colors"
                 >
-                  Abrir hoja y escribir
+                  Crear Guion y Abrir Editor
                 </button>
               </div>
             </motion.form>

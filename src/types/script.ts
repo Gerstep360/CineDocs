@@ -1,8 +1,29 @@
 /**
- * CineDocs Studio - Core Data Models & Types
+ * Gerstep Script Studio / CineDocs - Core Data Models & Script Structures
  */
 
+export type ScriptStructureType =
+  | 'cinematografica'
+  | 'estandar_flexible'
+  | 'hibrida'
+  | 'voz_en_off'
+  | 'audiovisual_tecnico'
+  | 'sketch_comedia'
+  | 'documental_entrevista'
+  | 'tutorial_educativo'
+  | 'programa_escaleta'
+  | 'audio_podcast'
+  | 'videoclip'
+  // Backwards compatibility aliases
+  | 'screenplay'
+  | 'two_column'
+  | 'youtube'
+  | 'short';
+
+export type TemplateType = ScriptStructureType;
+
 export type BlockType =
+  // A. Cinematográfica & Ficción
   | 'scene_heading'
   | 'action'
   | 'character'
@@ -10,7 +31,78 @@ export type BlockType =
   | 'dialogue'
   | 'transition'
   | 'shot'
-  | 'general';
+  | 'voice_over'
+  | 'off_screen'
+  | 'general'
+  // B. Estándar flexible
+  | 'heading_1'
+  | 'heading_2'
+  | 'paragraph'
+  | 'narration'
+  | 'description'
+  | 'list_item'
+  | 'note_block'
+  // C. Híbrida (Divisor de sección con su propia estructura)
+  | 'section_divider'
+  // D. Voz en off
+  | 'pause_mark'
+  | 'emphasis'
+  | 'visual_desc'
+  | 'music_cue'
+  | 'sfx_cue'
+  // E. Audiovisual técnico (2 columnas VIDEO / AUDIO)
+  | 'av_row'
+  // F. Sketch y comedia
+  | 'situation'
+  | 'twist'
+  | 'punchline'
+  // G. Documental y entrevista
+  | 'interview_question'
+  | 'testimony'
+  | 'interview_subject'
+  | 'archive_footage'
+  | 'source_ref'
+  | 'reenactment'
+  | 'research_note'
+  // H. Tutorial y educativo
+  | 'explanation'
+  | 'demonstration'
+  | 'screen_action'
+  | 'example_block'
+  | 'visual_resource'
+  // I. Programa y escaleta
+  | 'segment_header'
+  | 'duration_mark'
+  | 'host_cue'
+  | 'guest_cue'
+  | 'intro_cue'
+  | 'outro_cue'
+  | 'production_note'
+  // J. Audio y podcast
+  | 'narrator_cue'
+  | 'voice_cue'
+  | 'ambience_cue'
+  | 'silence_mark'
+  // K. Videoclip
+  | 'music_section'
+  | 'timecode_mark'
+  | 'choreography';
+
+export type NarrativeMethodologyId =
+  | 'none'
+  | 'cine_tres_actos'
+  | 'cine_cinco_actos'
+  | 'cine_viaje_heroe'
+  | 'cine_beat_sheet'
+  | 'series_tramas_abc'
+  | 'series_teaser_actos'
+  | 'sketch_escalada_remate'
+  | 'video_gancho_desarrollo'
+  | 'tutorial_objetivo_resultado'
+  | 'publicidad_aida'
+  | 'publicidad_problema_solucion'
+  | 'documental_investigacion'
+  | 'programa_escaleta_tiempo';
 
 export interface ScriptBlock {
   id: string;
@@ -22,6 +114,9 @@ export interface ScriptBlock {
   // Two-column audio/video support
   visualText?: string;
   audioText?: string;
+  // Hybrid section structure support: defines or overrides structure for this section/block
+  sectionStructure?: ScriptStructureType;
+  sectionTitle?: string;
 }
 
 export type ProjectCategory =
@@ -30,12 +125,6 @@ export type ProjectCategory =
   | 'video'
   | 'episodic'
   | 'custom';
-
-export type TemplateType =
-  | 'screenplay'
-  | 'two_column'
-  | 'youtube'
-  | 'short';
 
 export interface Character {
   id: string;
@@ -88,9 +177,11 @@ export interface ScriptDocument {
   id: string;
   projectId: string;
   seasonId?: string;
+  seasonNumber?: number;
   episodeNumber?: number;
   title: string;
-  templateType: TemplateType;
+  templateType: ScriptStructureType;
+  methodologyId?: NarrativeMethodologyId;
   blocks: ScriptBlock[];
   pageCount?: number;
   createdAt: string;
@@ -98,6 +189,7 @@ export interface ScriptDocument {
   driveFileId?: string;
   driveWebViewLink?: string;
   driveFolderPath?: string;
+  localDirectoryPath?: string;
   lastSyncedAt?: string;
   snapshots?: LocalSnapshot[];
 }
@@ -115,6 +207,8 @@ export interface Project {
   title: string;
   category: ProjectCategory;
   subCategory?: string;
+  defaultStructure?: ScriptStructureType;
+  methodologyId?: NarrativeMethodologyId;
   logline?: string;
   author?: string;
   isFavorite: boolean;
@@ -130,5 +224,6 @@ export interface Project {
   coverColor?: string;
   driveFolderId?: string;
   driveFolderPath?: string;
+  localDirectoryPath?: string;
   lastSyncedAt?: string;
 }
