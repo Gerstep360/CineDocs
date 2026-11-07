@@ -137,12 +137,32 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
   const blockRefs = useRef<(HTMLTextAreaElement | null)[]>([]);
   const menuContainerRef = useRef<HTMLDivElement>(null);
 
+  const [currentStructure, setCurrentStructure] = useState<ScriptStructureType>(() =>
+    normalizeStructureType(
+      activeDocument.templateType || project.defaultStructure || 'cinematografica'
+    )
+  );
+
   useEffect(() => {
+    const resolved = normalizeStructureType(
+      activeDocument.templateType || project.defaultStructure || 'cinematografica'
+    );
+    setCurrentStructure(resolved);
     setBlocks(activeDocument.blocks || []);
     setDocTitle(activeDocument.title);
     setHistory([activeDocument.blocks || []]);
     setHistoryIndex(0);
   }, [activeDocument.id]);
+
+  // Also sync if activeDocument.templateType changes externally
+  useEffect(() => {
+    if (activeDocument.templateType) {
+      const normalized = normalizeStructureType(activeDocument.templateType);
+      if (normalized !== currentStructure) {
+        setCurrentStructure(normalized);
+      }
+    }
+  }, [activeDocument.templateType]);
 
   // Close top dropdowns on outside click
   useEffect(() => {
@@ -162,9 +182,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     return undefined;
   }, [project, activeDocument.seasonId]);
 
-  const documentStructure = normalizeStructureType(
-    activeDocument.templateType || project.defaultStructure || 'cinematografica'
-  );
+  const documentStructure = currentStructure;
   const documentStructureDef = ScreenplayEngine.getStructureDefinition(documentStructure);
 
   // Effective structure at current block (supports Hybrid sub-sections)
@@ -188,6 +206,20 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     );
   }, [blocks, activeBlockIndex, documentStructure]);
 
+  // Live word count and estimated speaking time (at 150 words per minute)
+  const scriptMetrics = useMemo(() => {
+    const allText = blocks
+      .map((b) => `${b.text || ''} ${b.audioText || ''}`)
+      .join(' ')
+      .trim();
+    const words = allText ? allText.split(/\s+/).filter(Boolean).length : 0;
+    const totalSeconds = Math.round((words / 150) * 60);
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    const formattedDuration = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    return { words, formattedDuration };
+  }, [blocks]);
+
   const activeMethodologyId: NarrativeMethodologyId =
     activeDocument.methodologyId || project.methodologyId || 'none';
   const activeMethodology = useMemo(
@@ -209,6 +241,10 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     recordHistory = true,
     overrideStructure?: ScriptStructureType
   ) => {
+    const targetStructure = normalizeStructureType(overrideStructure || currentStructure);
+    if (overrideStructure && targetStructure !== currentStructure) {
+      setCurrentStructure(targetStructure);
+    }
     setBlocks(newBlocks);
     if (recordHistory) {
       pushHistory(newBlocks);
@@ -216,7 +252,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
     onUpdateDocument({
       ...activeDocument,
       title: docTitle,
-      templateType: overrideStructure || activeDocument.templateType,
+      templateType: targetStructure,
       blocks: newBlocks,
       updatedAt: new Date().toISOString(),
     });
@@ -226,11 +262,11 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
   const handleRequestStructureChange = (targetStructure: ScriptStructureType) => {
     setOpenMenu(null);
     const normalizedTarget = normalizeStructureType(targetStructure);
-    if (normalizedTarget === documentStructure) return;
+    setCurrentStructure(normalizedTarget);
 
     const hasWrittenContent = blocks.some(
       (b) =>
-        (b.text && b.text.trim().length > 0 && !b.text.startsWith('Sección ')) ||
+        !ScreenplayEngine.isBoilerplateText(b.text) ||
         (b.visualText && b.visualText.trim().length > 0) ||
         (b.audioText && b.audioText.trim().length > 0)
     );
@@ -240,7 +276,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
       updateBlocksState(freshBlocks, true, normalizedTarget);
       const structDef = ScreenplayEngine.getStructureDefinition(normalizedTarget);
       setDriveToast({
-        message: `Estructura cambiada a: ${structDef.code}. ${structDef.name}`,
+        message: `Estructura activa guardada: ${structDef.code}. ${structDef.name}`,
       });
       setTimeout(() => setDriveToast(null), 3500);
       return;
@@ -258,7 +294,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
       updateBlocksState(conversion.convertedBlocks, true, normalizedTarget);
       const structDef = ScreenplayEngine.getStructureDefinition(normalizedTarget);
       setDriveToast({
-        message: `Estructura adaptada a "${structDef.shortName}" sin perder contenido (Ctrl+Z para deshacer).`,
+        message: `Estructura cambiada y guardada: "${structDef.shortName}" (Ctrl+Z para deshacer).`,
       });
       setTimeout(() => setDriveToast(null), 4000);
     }
@@ -267,11 +303,12 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
   const confirmStructureConversion = () => {
     if (!pendingStructureChange) return;
     const { targetStructure, convertedBlocks } = pendingStructureChange;
+    setCurrentStructure(targetStructure);
     updateBlocksState(convertedBlocks, true, targetStructure);
     setPendingStructureChange(null);
     const structDef = ScreenplayEngine.getStructureDefinition(targetStructure);
     setDriveToast({
-      message: `Estructura convertida a "${structDef.shortName}" (Puedes deshacer con Ctrl+Z).`,
+      message: `Estructura convertida y guardada: "${structDef.shortName}" (Ctrl+Z para deshacer).`,
     });
     setTimeout(() => setDriveToast(null), 4000);
   };
@@ -1967,16 +2004,77 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                     </div>
                   )}
 
+                  {/* Page 1 Structure Header Banner: Clearly distinguishes each of the 11 structures (A-K) */}
+                  {page.pageNumber === 1 && (
+                    <div className="mb-6 pb-4 border-b border-slate-200 dark:border-neutral-800 font-ui">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 text-[11px] font-mono font-bold rounded bg-blue-600 text-white">
+                            Estructura {documentStructureDef.code}: {documentStructureDef.shortName}
+                          </span>
+                          <span className="text-[11px] text-slate-500 dark:text-neutral-400">
+                            {documentStructureDef.idealFor}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-3 text-[11px] font-mono text-slate-500 dark:text-neutral-400">
+                          <span>{scriptMetrics.words} palabras</span>
+                          <span>·</span>
+                          <span title="Tiempo estimado de locución o lectura (150 ppm)">
+                            Duración est.: {scriptMetrics.formattedDuration}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Quick-Insert Bar for the Active Structure's Specific Blocks */}
+                      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
+                          Insertar bloque ({effectiveStructureDef.shortName}):
+                        </span>
+                        {allowedBlockDefsAtCursor.map((bDef) => (
+                          <button
+                            key={bDef.type}
+                            type="button"
+                            onClick={() => handleInsertNewBlockAfter(activeBlockIndex, bDef.type)}
+                            className="px-2 py-0.5 text-[11px] font-medium rounded-md bg-slate-100 dark:bg-neutral-800 hover:bg-blue-50 dark:hover:bg-blue-950/60 text-slate-700 dark:text-neutral-200 hover:text-blue-600 dark:hover:text-blue-400 border border-slate-200/80 dark:border-neutral-700 transition-colors"
+                            title={bDef.hint}
+                          >
+                            + {bDef.shortLabel}
+                          </button>
+                        ))}
+                        {documentStructure === 'hibrida' && (
+                          <button
+                            type="button"
+                            onClick={() => handleInsertHybridSection('cinematografica')}
+                            className="px-2 py-0.5 text-[11px] font-semibold rounded-md bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-300/70 dark:border-amber-800"
+                          >
+                            + Nueva Sección Híbrida
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-2.5">
                     {page.blocks.map((block) => {
                       const globalIndex = blocks.findIndex((b) => b.id === block.id);
                       const isFocused = activeBlockIndex === globalIndex;
                       const blockDef = ScreenplayEngine.getBlockDefinition(block.type);
+                      const effectiveStructForBlock = ScreenplayEngine.getEffectiveStructureAtBlock(
+                        blocks,
+                        globalIndex,
+                        documentStructure
+                      );
                       const allowedAtThisBlock = ScreenplayEngine.getAllowedBlocksForPosition(
                         blocks,
                         globalIndex,
                         documentStructure
                       );
+                      const useModernSansFont =
+                        effectiveStructForBlock === 'estandar_flexible' ||
+                        effectiveStructForBlock === 'tutorial_educativo' ||
+                        effectiveStructForBlock === 'documental_entrevista' ||
+                        effectiveStructForBlock === 'programa_escaleta';
 
                       // Render Hybrid Section Divider with inline structure selector
                       if (block.type === 'section_divider') {
@@ -2078,10 +2176,12 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                           key={block.id}
                           className={`relative group ${getBlockVisualClasses(block.type)}`}
                         >
-                          {/* Interactive Left Margin Control (Click to change block style or insert) */}
+                          {/* Interactive Left Margin / Inline Tag Control */}
                           <div
                             className={`absolute -left-24 top-1 flex items-center gap-1 transition-opacity ${
-                              isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-80'
+                              effectiveStructForBlock !== 'cinematografica' || isFocused
+                                ? 'opacity-100'
+                                : 'opacity-0 group-hover:opacity-80'
                             }`}
                           >
                             <button
@@ -2160,7 +2260,7 @@ export const ScreenplayEditor: React.FC<ScreenplayEditorProps> = ({
                             onKeyDown={(e) => handleBlockKeyDown(globalIndex, e)}
                             placeholder={blockDef.placeholder}
                             className={`w-full bg-transparent ${
-                              documentStructure === 'estandar_flexible' ? 'font-ui' : 'font-script'
+                              useModernSansFont ? 'font-ui' : 'font-script'
                             } resize-none focus:outline-none focus:bg-blue-500/5 rounded-xs transition-colors overflow-hidden ${
                               block.type === 'character' ||
                               block.type === 'interview_subject' ||

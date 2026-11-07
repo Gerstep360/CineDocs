@@ -172,45 +172,113 @@ export default function App() {
     }, 250);
   }, []);
 
-  const handleUpdateProject = (updatedProject: Project) => {
-    setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)));
-    saveProjectDebounced(updatedProject);
-  };
+  const handleUpdateProject = useCallback(
+    (updatedProject: Project) => {
+      setProjects((prev) => {
+        const next = prev.map((p) => {
+          if (p.id !== updatedProject.id) return p;
+          // Preserve latest templateType on documents if updatedProject was built from an older prop snapshot
+          const mergedDocs = (updatedProject.documents || []).map((d) => {
+            const existingDoc = p.documents?.find((ed) => ed.id === d.id);
+            return {
+              ...d,
+              templateType: d.templateType || existingDoc?.templateType || p.defaultStructure || 'cinematografica',
+            };
+          });
+          const mergedSeasons = updatedProject.seasons?.map((s) => {
+            const existingSeason = p.seasons?.find((es) => es.id === s.id);
+            return {
+              ...s,
+              episodes: s.episodes.map((ep) => {
+                const existingEp = existingSeason?.episodes.find((ee) => ee.id === ep.id);
+                return {
+                  ...ep,
+                  templateType:
+                    ep.templateType ||
+                    existingEp?.templateType ||
+                    updatedProject.defaultStructure ||
+                    p.defaultStructure ||
+                    'cinematografica',
+                };
+              }),
+            };
+          });
+          const merged: Project = {
+            ...updatedProject,
+            defaultStructure:
+              updatedProject.defaultStructure ||
+              mergedDocs[0]?.templateType ||
+              p.defaultStructure ||
+              'cinematografica',
+            documents: mergedDocs,
+            seasons: mergedSeasons,
+            updatedAt: new Date().toISOString(),
+          };
+          saveProjectDebounced(merged);
+          return merged;
+        });
+        return next;
+      });
+    },
+    [saveProjectDebounced]
+  );
 
-  const handleUpdateDocument = (updatedDoc: ScriptDocument) => {
-    if (!activeProject) return;
+  const handleUpdateDocument = useCallback(
+    (updatedDoc: ScriptDocument) => {
+      setActiveDocumentId(updatedDoc.id);
+      setProjects((prev) =>
+        prev.map((proj) => {
+          if (proj.id !== updatedDoc.projectId && proj.id !== activeProjectId) {
+            return proj;
+          }
 
-    let updatedProject: Project;
+          let updatedProject: Project;
+          const resolvedStructure =
+            updatedDoc.templateType || proj.defaultStructure || 'cinematografica';
+          const docWithStruct: ScriptDocument = {
+            ...updatedDoc,
+            templateType: resolvedStructure,
+            updatedAt: new Date().toISOString(),
+          };
 
-    if (activeProject.category === 'series' && activeProject.seasons) {
-      const nextSeasons = activeProject.seasons.map((season) => ({
-        ...season,
-        episodes: season.episodes.map((ep) => (ep.id === updatedDoc.id ? updatedDoc : ep)),
-      }));
-      updatedProject = {
-        ...activeProject,
-        seasons: nextSeasons,
-        updatedAt: new Date().toISOString(),
-      };
-    } else {
-      const nextDocs = activeProject.documents.map((d) =>
-        d.id === updatedDoc.id ? updatedDoc : d
+          if (proj.category === 'series' && proj.seasons) {
+            const nextSeasons = proj.seasons.map((season) => ({
+              ...season,
+              episodes: season.episodes.map((ep) =>
+                ep.id === docWithStruct.id ? docWithStruct : ep
+              ),
+            }));
+            updatedProject = {
+              ...proj,
+              defaultStructure: resolvedStructure,
+              seasons: nextSeasons,
+              updatedAt: new Date().toISOString(),
+            };
+          } else {
+            const nextDocs = (proj.documents || []).map((d) =>
+              d.id === docWithStruct.id ? docWithStruct : d
+            );
+            updatedProject = {
+              ...proj,
+              defaultStructure: resolvedStructure,
+              documents: nextDocs,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+
+          saveProjectDebounced(updatedProject);
+          return updatedProject;
+        })
       );
-      updatedProject = {
-        ...activeProject,
-        documents: nextDocs,
-        updatedAt: new Date().toISOString(),
-      };
-    }
-
-    setActiveDocumentId(updatedDoc.id);
-    handleUpdateProject(updatedProject);
-  };
+    },
+    [activeProjectId, saveProjectDebounced]
+  );
 
   // Create clean blank project adapted to the chosen structure (A-K)
   const handleCreateProject = async (data: any) => {
     const newId = `proj-${Date.now()}`;
     const initialDocId = `doc-${Date.now()}`;
+    const firstSeasonId = `seas-${Date.now()}`;
     const chosenStructure: ScriptStructureType =
       data.templateType || data.defaultStructure || 'cinematografica';
     const chosenMethodology: NarrativeMethodologyId = data.methodologyId || 'none';
@@ -225,6 +293,7 @@ export default function App() {
     const initialDoc: ScriptDocument = {
       id: initialDocId,
       projectId: newId,
+      seasonId: category === 'series' ? firstSeasonId : undefined,
       title: category === 'series' ? 'Capítulo 1' : projTitle,
       templateType: chosenStructure,
       methodologyId: chosenMethodology,
@@ -266,11 +335,11 @@ export default function App() {
         category === 'series'
           ? [
               {
-                id: `seas-${Date.now()}`,
+                id: firstSeasonId,
                 projectId: newId,
                 seasonNumber: 1,
                 title: 'Temporada 1',
-                episodes: [{ ...initialDoc, seasonId: `seas-${Date.now()}` }],
+                episodes: [initialDoc],
               },
             ]
           : undefined,

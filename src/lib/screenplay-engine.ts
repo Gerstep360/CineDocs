@@ -1349,8 +1349,23 @@ export const ScreenplayEngine = {
   },
 
   /**
+   * Checks whether a block only contains default placeholder/boilerplate text
+   */
+  isBoilerplateText(text?: string): boolean {
+    if (!text) return true;
+    const t = text.trim().toUpperCase();
+    return (
+      t === '' ||
+      t === 'INT. LUGAR - DÍA' ||
+      t === 'INT. LUGAR DE INICIO - DÍA' ||
+      t === 'SECCIÓN 1' ||
+      t === 'SECCIÓN 1: INTRODUCCIÓN'
+    );
+  },
+
+  /**
    * Non-destructively converts blocks when switching structure on a document or section.
-   * Never deletes or invents dialogue/narrative content.
+   * Never deletes or invents user-written dialogue/narrative content, and cleans up empty boilerplate.
    */
   convertBlocksToStructure(
     blocks: ScriptBlock[],
@@ -1358,30 +1373,45 @@ export const ScreenplayEngine = {
   ): { convertedBlocks: ScriptBlock[]; isAmbiguous: boolean; summary: string } {
     const target = normalizeStructureType(targetStructure);
 
+    // Filter out blocks that only contain default empty/cinematic boilerplate if switching away
+    const meaningfulBlocks = blocks.filter(
+      (b) =>
+        !this.isBoilerplateText(b.text) ||
+        (b.visualText && b.visualText.trim().length > 0) ||
+        (b.audioText && b.audioText.trim().length > 0)
+    );
+
+    if (meaningfulBlocks.length === 0) {
+      return {
+        convertedBlocks: this.getInitialBlocksForStructure(target),
+        isAmbiguous: false,
+        summary: `Estructura inicializada con los bloques propios de "${this.getStructureDefinition(target).name}".`,
+      };
+    }
+
     if (target === 'hibrida') {
-      // Hybrid keeps all existing blocks intact and adds a section header at top if none exists
-      const hasDivider = blocks.some((b) => b.type === 'section_divider');
+      const hasDivider = meaningfulBlocks.some((b) => b.type === 'section_divider');
       const next = hasDivider
-        ? [...blocks]
+        ? [...meaningfulBlocks]
         : [
             {
               id: `blk-sec-${Date.now()}`,
               type: 'section_divider' as BlockType,
-              text: 'Sección 1',
-              sectionStructure: 'cinematografica' as ScriptStructureType,
+              text: 'Sección 1: Introducción',
+              sectionStructure: 'voz_en_off' as ScriptStructureType,
             },
-            ...blocks,
+            ...meaningfulBlocks,
           ];
       return {
         convertedBlocks: next,
         isAmbiguous: false,
-        summary: 'Modo Híbrido activado: todos tus bloques actuales se conservan intactos y puedes añadir nuevas secciones con distintas estructuras.',
+        summary:
+          'Modo Híbrido activado: todos tus bloques actuales se conservan intactos y puedes añadir nuevas secciones con distintas estructuras.',
       };
     }
 
     if (target === 'audiovisual_tecnico') {
-      // Convert 1-column blocks into 2-column VIDEO / AUDIO rows preserving all text
-      const rows: ScriptBlock[] = blocks.map((b) => {
+      const rows: ScriptBlock[] = meaningfulBlocks.map((b) => {
         if (b.type === 'av_row') return b;
         const isAudioType =
           b.type === 'dialogue' ||
@@ -1406,18 +1436,17 @@ export const ScreenplayEngine = {
         convertedBlocks: rows,
         isAmbiguous: true,
         summary:
-          'Las acciones y encabezados pasarán a la columna VIDEO y los diálogos, narraciones o sonidos pasarán a la columna AUDIO sin perder ninguna palabra.',
+          'Las acciones y descripciones visuales pasarán a la columna VIDEO y los diálogos, narraciones o sonidos pasarán a la columna AUDIO sin perder ninguna palabra.',
       };
     }
 
-    // Converting from 2-column or other structures to a 1-column structure
     const targetDef = this.getStructureDefinition(target);
-    const hadTwoColumns = blocks.some(
+    const hadTwoColumns = meaningfulBlocks.some(
       (b) => b.type === 'av_row' || (b.visualText && b.audioText)
     );
 
     const mapped: ScriptBlock[] = [];
-    blocks.forEach((b) => {
+    meaningfulBlocks.forEach((b) => {
       if (b.type === 'av_row' || (b.visualText && b.audioText)) {
         if (b.visualText?.trim()) {
           mapped.push({

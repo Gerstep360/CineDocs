@@ -182,138 +182,131 @@ export const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
   return (
     <div className="min-h-full bg-slate-100 dark:bg-neutral-950 transition-colors duration-200">
-      {/* Top Quick Starter Strip */}
+      {/* Top Quick Starter Strip: All 11 Structures (A-K) */}
       <section className="bg-slate-200/60 dark:bg-neutral-900/70 border-b border-slate-200 dark:border-neutral-800 py-6 px-6">
         <div className="max-w-6xl mx-auto">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div>
-              <h2 className="text-xs font-semibold text-slate-700 dark:text-neutral-300">
-                Iniciar un nuevo guion (Cualquier producción puede usar cualquier estructura)
+              <h2 className="text-xs font-bold text-slate-800 dark:text-neutral-200 uppercase tracking-wider">
+                Las 11 Estructuras de Escritura (A–K) — Independientes del Tipo de Producción
               </h2>
+              <p className="text-[11px] text-slate-500 dark:text-neutral-400 mt-0.5">
+                Haz clic en cualquier estructura para configurar tu guion con ese formato exacto (o créalo en 1 clic).
+              </p>
             </div>
-            <label className="flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
-              <Upload className="w-3.5 h-3.5" />
-              <span>Importar respaldo (.json)</span>
-              <input
-                type="file"
-                accept=".json"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (evt) => {
-                      const text = evt.target?.result as string;
-                      if (text) onImportBackup(text);
-                    };
-                    reader.readAsText(file);
-                  }
-                }}
-              />
-            </label>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
+                <Upload className="w-3.5 h-3.5" />
+                <span>Importar respaldo (.json)</span>
+                <input
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (evt) => {
+                        const text = evt.target?.result as string;
+                        if (text) onImportBackup(text);
+                      };
+                      reader.readAsText(file);
+                    }
+                  }}
+                />
+              </label>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3.5">
-            {[
-              {
-                id: 'cinematic',
-                title: 'Cinematográfica',
-                subtitle: 'Cine, cortos y ficción',
-                category: 'movie' as ProjectCategory,
-                structure: 'cinematografica' as ScriptStructureType,
-                methodology: 'cine_tres_actos' as NarrativeMethodologyId,
-                icon: Film,
-                accent: 'text-blue-600 dark:text-blue-400',
-              },
-              {
-                id: 'hybrid',
-                title: 'Híbrida Multiformato',
-                subtitle: 'Combina estilos por sección',
-                category: 'video' as ProjectCategory,
-                structure: 'hibrida' as ScriptStructureType,
-                methodology: 'video_gancho_desarrollo' as NarrativeMethodologyId,
-                icon: Sparkles,
-                accent: 'text-purple-600 dark:text-purple-400',
-              },
-              {
-                id: 'flexible',
-                title: 'Estándar Flexible',
-                subtitle: 'Libre sin INT./EXT.',
-                category: 'video' as ProjectCategory,
-                structure: 'estandar_flexible' as ScriptStructureType,
-                methodology: 'none' as NarrativeMethodologyId,
-                icon: Plus,
-                accent: 'text-emerald-600 dark:text-emerald-400',
-              },
-              {
-                id: 'voiceover',
-                title: 'Voz en Off / Ensayo',
-                subtitle: 'Narración continua y pausas',
-                category: 'video' as ProjectCategory,
-                structure: 'voz_en_off' as ScriptStructureType,
-                methodology: 'video_gancho_desarrollo' as NarrativeMethodologyId,
-                icon: Video,
-                accent: 'text-amber-600 dark:text-amber-400',
-              },
-              {
-                id: 'sketch',
-                title: 'Sketch y Comedia',
-                subtitle: 'Situación, giro y remate',
-                category: 'episodic' as ProjectCategory,
-                structure: 'sketch_comedia' as ScriptStructureType,
-                methodology: 'sketch_escalada_remate' as NarrativeMethodologyId,
-                icon: Tv,
-                accent: 'text-rose-600 dark:text-rose-400',
-              },
-              {
-                id: 'docu',
-                title: 'Documental / Técnico',
-                subtitle: 'Entrevistas o 2 Columnas',
-                category: 'movie' as ProjectCategory,
-                structure: 'documental_entrevista' as ScriptStructureType,
-                methodology: 'documental_investigacion' as NarrativeMethodologyId,
-                icon: Layers,
-                accent: 'text-indigo-600 dark:text-indigo-400',
-              },
-            ].map((card, i) => (
-              <motion.button
-                key={card.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.03, duration: 0.2 }}
-                whileHover={{ y: -3 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() =>
-                  openModalWithPreset(
-                    card.category,
-                    card.title,
-                    card.structure,
-                    card.methodology
-                  )
-                }
-                className="group flex flex-col text-left focus:outline-none"
-              >
-                <div className="w-full h-28 rounded-lg bg-white dark:bg-neutral-900 border border-slate-300/80 dark:border-neutral-800 group-hover:border-blue-500 dark:group-hover:border-blue-500 shadow-xs group-hover:shadow-md transition-all p-3 flex flex-col justify-between relative overflow-hidden">
-                  <div className="space-y-1.5 opacity-35 group-hover:opacity-60 transition-opacity">
-                    <div className="w-1/2 h-1.5 bg-slate-400 dark:bg-neutral-600 rounded-full" />
-                    <div className="w-full h-1 bg-slate-300 dark:bg-neutral-700 rounded-full" />
-                    <div className="w-4/5 h-1 bg-slate-300 dark:bg-neutral-700 rounded-full" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {STRUCTURES_CATALOG.map((struct, i) => {
+              const defaultCat: ProjectCategory =
+                struct.id === 'cinematografica' || struct.id === 'documental_entrevista'
+                  ? 'movie'
+                  : struct.id === 'sketch_comedia' || struct.id === 'programa_escaleta'
+                  ? 'episodic'
+                  : 'video';
+
+              return (
+                <motion.div
+                  key={struct.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.02, duration: 0.18 }}
+                  whileHover={{ y: -2 }}
+                  className="group flex flex-col justify-between rounded-xl bg-white dark:bg-neutral-900 border border-slate-300/80 dark:border-neutral-800 hover:border-blue-500 dark:hover:border-blue-500 shadow-2xs hover:shadow-md transition-all p-3 text-left"
+                >
+                  <div
+                    onClick={() =>
+                      openModalWithPreset(
+                        defaultCat,
+                        struct.shortName,
+                        struct.id,
+                        'none'
+                      )
+                    }
+                    className="cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                      <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
+                        Estructura {struct.code}
+                      </span>
+                      {struct.usesTwoColumns && (
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-950/50 text-purple-600 dark:text-purple-300">
+                          2 Col
+                        </span>
+                      )}
+                      {struct.isHybrid && (
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300">
+                          Híbrido
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors leading-snug">
+                      {struct.shortName}
+                    </div>
+                    <p className="mt-1 text-[10px] text-slate-500 dark:text-neutral-400 line-clamp-2 leading-relaxed">
+                      {struct.description}
+                    </p>
                   </div>
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-neutral-800/80">
-                    <card.icon className={`w-4 h-4 ${card.accent}`} />
-                    <span className="text-[10px] font-mono text-slate-400 dark:text-neutral-500">
-                      + Elegir
-                    </span>
+
+                  <div className="mt-3 pt-2 border-t border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openModalWithPreset(
+                          defaultCat,
+                          struct.shortName,
+                          struct.id,
+                          'none'
+                        )
+                      }
+                      className="text-[10px] font-medium text-slate-600 dark:text-neutral-400 hover:text-blue-600 dark:hover:text-blue-400"
+                    >
+                      Configurar...
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onCreateProject({
+                          title: `Nuevo — ${struct.shortName}`,
+                          category: defaultCat,
+                          subCategory: struct.shortName,
+                          author: 'Autor',
+                          templateType: struct.id,
+                          defaultStructure: struct.id,
+                          methodologyId: 'none',
+                        } as any)
+                      }
+                      className="px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-semibold transition-colors"
+                      title={`Crear guion directamente con estructura ${struct.name}`}
+                    >
+                      + Crear ya
+                    </button>
                   </div>
-                </div>
-                <span className="mt-2 text-xs font-semibold text-slate-800 dark:text-neutral-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  {card.title}
-                </span>
-                <span className="text-[11px] text-slate-500 dark:text-neutral-400">
-                  {card.subtitle}
-                </span>
-              </motion.button>
-            ))}
+                </motion.div>
+              );
+            })}
           </div>
         </div>
       </section>
