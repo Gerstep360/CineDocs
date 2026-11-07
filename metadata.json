@@ -1,0 +1,6 @@
+{
+  "name": "Gerstep Script Studio",
+  "description": "Editor y gestor profesional de guiones para cine, series, YouTube y producciones audiovisuales con formato automático y persistencia local.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
